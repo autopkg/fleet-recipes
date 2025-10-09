@@ -43,8 +43,7 @@ DEFAULT_BRANCH_PREFIX = "autopkg"
 DEFAULT_PR_LABELS = ["autopkg"]
 
 # Fleet version constants
-FLEET_MINIMUM_VERSION = "4.70.0"
-FLEET_NEW_FORMAT_VERSION = "4.74.0"
+FLEET_MINIMUM_VERSION = "4.74.0"
 
 # HTTP timeout constants (in seconds)
 FLEET_VERSION_TIMEOUT = 30
@@ -508,37 +507,6 @@ class FleetImporter(Processor):
             return True
         return False
 
-    def _is_fleet_474_or_higher(self, fleet_version: str) -> bool:
-        """Check if Fleet version is 4.74.0 or higher (new YAML format)."""
-        try:
-            # Parse version string like "4.74.0" or "4.74.0-dev"
-            version_parts = fleet_version.split("-")[0].split(".")
-            major = int(version_parts[0])
-            minor = int(version_parts[1])
-            patch = int(version_parts[2]) if len(version_parts) > 2 else 0
-
-            # Parse target version from constant
-            target_parts = FLEET_NEW_FORMAT_VERSION.split(".")
-            target_major = int(target_parts[0])
-            target_minor = int(target_parts[1])
-            target_patch = int(target_parts[2]) if len(target_parts) > 2 else 0
-
-            # Check if >= target version
-            if major > target_major:
-                return True
-            elif major == target_major and minor > target_minor:
-                return True
-            elif (
-                major == target_major
-                and minor == target_minor
-                and patch >= target_patch
-            ):
-                return True
-            return False
-        except (ValueError, IndexError):
-            # Default to old format if version parsing fails
-            return False
-
     def _is_fleet_minimum_supported(self, fleet_version: str) -> bool:
         """Check if Fleet version meets minimum requirements."""
         try:
@@ -570,7 +538,7 @@ class FleetImporter(Processor):
         """Query Fleet API to get the server version.
 
         Returns the semantic version string (e.g., "4.74.0").
-        If the query fails, defaults to "4.74.0" (new format) assuming a modern deployment.
+        If the query fails, defaults to "4.74.0" (minimum supported) assuming a modern deployment.
         """
         try:
             url = f"{fleet_api_base}/api/v1/fleet/version"
@@ -595,11 +563,11 @@ class FleetImporter(Processor):
             json.JSONDecodeError,
             KeyError,
         ):
-            # If we can't get the version, assume new format for modern deployments
+            # If we can't get the version, assume minimum supported version for modern deployments
             pass
 
-        # Default to new format version if query fails (assume modern Fleet deployment)
-        return FLEET_NEW_FORMAT_VERSION
+        # Default to minimum supported version if query fails (assume modern Fleet deployment)
+        return FLEET_MINIMUM_VERSION
 
     @staticmethod
     def _pr_body(
@@ -784,10 +752,10 @@ class FleetImporter(Processor):
         fleet_version: str,
     ):
         """
-        We store the package metadata in a YAML the GitOps worker can apply.
-        Format automatically determined by querying Fleet API version:
-        - Fleet < 4.74.0: targeting keys go in package files
-        - Fleet >= 4.74.0: targeting keys go in team YAML software section
+        Store the package metadata in a YAML file the GitOps worker can apply.
+
+        Fleet >= 4.74.0 format: targeting keys (self_service, labels) go in team YAML software section.
+        Package YAML contains only core metadata (name, version, platform, hash, scripts).
         """
 
         # Compose content. If GitOps runner expects `path:`, you’ll reference this file
@@ -802,20 +770,10 @@ class FleetImporter(Processor):
         if hash_sha256:
             pkg_block["hash_sha256"] = hash_sha256
 
-        # Check if we're using the new format (>= 4.74.0)
-        is_new_format = self._is_fleet_474_or_higher(fleet_version)
+        # Fleet >= 4.74.0: self_service and labels go in team YAML, not package YAML
+        # These parameters are accepted for backwards compatibility but not used
 
-        # Optional targeting and behavior - only for old format (< 4.74.0)
-        # In new format, these go in team YAML software section
-        if not is_new_format:
-            if self_service:
-                pkg_block["self_service"] = True
-            if labels_include_any:
-                pkg_block["labels_include_any"] = list(labels_include_any)
-            if labels_exclude_any:
-                pkg_block["labels_exclude_any"] = list(labels_exclude_any)
-
-        # These fields remain in package YAML for both formats
+        # These fields remain in package YAML
         if automatic_install and platform in ("darwin", "macos"):
             pkg_block["automatic_install"] = True
         if pre_install_query:

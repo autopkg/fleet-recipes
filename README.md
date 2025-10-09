@@ -27,7 +27,7 @@ Upload a freshly built installer to Fleet using the Software API, then create or
 - **Python 3.9+**: For the FleetImporter processor
 - **AutoPkg 2.7+**: For recipe processing
 - **Git**: For GitOps repository operations
-- **Fleet API Access**: Fleet server v4.70.0+ with software management permissions
+- **Fleet API Access**: Fleet server v4.74.0+ with software management permissions
 - **GitHub Access**: Personal access token with `repo` and `pull-requests` permissions
 
 ---
@@ -112,20 +112,46 @@ All inputs can be provided as AutoPkg variables in your recipe or via `-k` overr
 
 ---
 
-## Fleet v4.74.0 Breaking Changes
+## YAML Format
 
-Fleet v4.74.0 introduces breaking changes to the software YAML format. The processor automatically detects the Fleet server version via the `/api/v1/fleet/version` endpoint and adapts the YAML format accordingly:
+This processor uses Fleet's v4.74.0+ YAML format where targeting keys (`self_service`, `labels_include_any`, `labels_exclude_any`) are stored in the team YAML software section, not in individual package YAML files.
 
-**Fleet < 4.74.0 (Old Format):**
-- `self_service`, `labels_include_any`, `labels_exclude_any` are stored in individual package YAML files
-- Compatible with existing Fleet deployments
+**Package YAML Structure:**
 
-**Fleet >= 4.74.0 (New Format):**
-- `self_service`, `labels_include_any`, `labels_exclude_any` are moved to team YAML software section
-- Package YAML files contain only core metadata (name, version, platform, hash, scripts)
-- Automatically detected and applied when connecting to Fleet v4.74.0+ servers
+```yaml
+name: "Firefox"
+version: "129.0.2"
+platform: "darwin"
+hash_sha256: "abc123..."         # if provided by Fleet response
+automatic_install: false        # optional macOS only
+pre_install_query:               # optional
+  query: "SELECT 1;"
+install_script:                  # optional
+  contents: |
+    #!/bin/bash
+    echo "custom install"
+uninstall_script:                # optional
+  contents: |
+    #!/bin/bash
+    echo "custom uninstall"
+post_install_script:             # optional
+  contents: |
+    #!/bin/bash
+    echo "post"
+```
 
-**Note:** If the version query fails, the processor defaults to the new format for modern Fleet deployments.
+**Team YAML Reference:**
+
+Package reference with targeting metadata in `teams/workstations.yml`:
+
+```yaml
+software:
+  packages:
+    - path: ../lib/macos/software/firefox.package.yml
+      self_service: true
+      labels_include_any:
+        - "Workstations"
+```
 
 ---
 
@@ -140,84 +166,6 @@ Fleet v4.74.0 introduces breaking changes to the software YAML format. The proce
 | `hash_sha256` | SHA-256 hash of the uploaded package, as returned by Fleet. |
 
 ---
-
-## What It Writes
-
-### Per title software YAML
-
-Created or updated at `<repo>/<software_dir>/<software_slug><package_yaml_suffix>`, for example `lib/macos/software/firefox.yml`.
-
-**Fleet < 4.74.0 Structure:**
-
-```yaml
-name: "Firefox"
-version: "129.0.2"
-platform: "darwin"
-hash_sha256: "abc123..."         # if provided by Fleet response
-self_service: true               # targeting - in package file
-automatic_install: false        # optional macOS only
-labels_include_any:              # targeting - in package file
-  - "Workstations"
-pre_install_query:               # optional
-  query: "SELECT 1;"
-install_script:                  # optional
-  contents: |
-    #!/bin/bash
-    echo "custom install"
-uninstall_script:                # optional
-  contents: |
-    #!/bin/bash
-    echo "custom uninstall"
-post_install_script:             # optional
-  contents: |
-    #!/bin/bash
-    echo "post"
-```
-
-**Fleet >= 4.74.0 Structure:**
-
-```yaml
-name: "Firefox"
-version: "129.0.2"
-platform: "darwin"
-hash_sha256: "abc123..."         # if provided by Fleet response
-automatic_install: false        # optional macOS only
-pre_install_query:               # optional
-  query: "SELECT 1;"
-install_script:                  # optional
-  contents: |
-    #!/bin/bash
-    echo "custom install"
-uninstall_script:                # optional
-  contents: |
-    #!/bin/bash
-    echo "custom uninstall"
-post_install_script:             # optional
-  contents: |
-    #!/bin/bash
-    echo "post"
-```
-
-### Team YAML update
-
-**Fleet < 4.74.0:** Simple package reference in `teams/workstations.yml`:
-
-```yaml
-software:
-  packages:
-    - path: ../lib/macos/software/firefox.package.yml
-```
-
-**Fleet >= 4.74.0:** Package reference with targeting metadata in `teams/workstations.yml`:
-
-```yaml
-software:
-  packages:
-    - path: ../lib/macos/software/firefox.package.yml
-      self_service: true
-      labels_include_any:
-        - "Workstations"
-```
 
 ---
 
