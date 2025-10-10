@@ -13,10 +13,10 @@ Upload a freshly built installer to Fleet using the Software API, then create or
 ## Features
 
 - Uploads a `.pkg` to Fleet for a specific team
-- Creates a feature branch named `<software-title>-<version>`
-- Writes or updates a per-title software YAML file in `lib/macos/software`
-- Ensures the team YAML references that software file in `software.packages`
-- Commits, pushes, and opens a GitHub pull request
+- **Two operation modes:**
+  - **GitOps mode** (default): Creates feature branch, updates YAML, opens pull request
+  - **Direct mode**: Only uploads package to Fleet without Git operations
+- Configures software with targeting rules, scripts, and install behavior
 - Idempotent where practical and fails loudly on API errors
 
 ---
@@ -37,6 +37,83 @@ Upload a freshly built installer to Fleet using the Software API, then create or
 AutoPkg [supports both XML (plist) and YAML recipe formats](https://github.com/autopkg/autopkg/wiki/Recipe-Format#overview). I personally find YAML more readable and maintainable than XML, especially for recipes that may be edited by hand or reviewed in code. YAML's indentation and lack of angle brackets make it easier to scan and less error-prone for most users.
 
 Additionally, Fleet's GitOps workflow is driven by YAML files for software configuration and team assignments. By using YAML for both AutoPkg recipes and Fleet GitOps files, this repository maintains consistency and makes it easier to reason about the entire workflow. Aligning with Fleet's format also reduces friction when integrating new tools or automations.
+
+---
+
+## Operation Modes
+
+The FleetImporter processor supports two distinct operation modes to accommodate different Fleet deployment workflows:
+
+### GitOps Mode (`use_gitops=true`, default)
+
+Best for production environments where infrastructure-as-code practices are important:
+
+- Uploads package to Fleet
+- Updates GitOps repository with software YAML
+- Creates a feature branch and opens a pull request for review
+- Maintains audit trail and change history
+- Enables team collaboration through PR reviews
+- Requires Git repository and GitHub credentials
+
+**Use when:**
+- You manage Fleet configuration through GitOps
+- Change review and approval processes are required
+- Multiple team members collaborate on software deployment
+- You need an audit trail of software changes
+
+### Direct Mode (`use_gitops=false`)
+
+Best for simplified workflows without GitOps infrastructure:
+
+- Uploads package to Fleet with full configuration
+- All settings (self_service, labels, scripts) applied via Fleet API
+- No Git operations or pull requests
+- Immediate package availability
+- Simpler setup with fewer dependencies
+
+**Use when:**
+- Small environments where GitOps overhead isn't justified
+- Proof-of-concept or testing environments
+- Quick iteration is more important than change review
+- You don't have a Fleet GitOps repository
+- Testing recipes before committing to GitOps workflow
+
+### Configuration Examples
+
+**GitOps Mode (default):**
+```yaml
+Process:
+- Arguments:
+    pkg_path: '%pkg_path%'
+    software_title: '%NAME%'
+    version: '%version%'
+    fleet_api_base: '%FLEET_API_BASE%'
+    fleet_api_token: '%FLEET_API_TOKEN%'
+    team_id: '%FLEET_TEAM_ID%'
+    # GitOps settings
+    use_gitops: true  # optional, this is the default
+    git_repo_url: '%FLEET_GITOPS_REPO_URL%'
+    github_token: '%FLEET_GITOPS_GITHUB_TOKEN%'
+  Processor: FleetImporter
+```
+
+**Direct Mode:**
+```yaml
+Process:
+- Arguments:
+    pkg_path: '%pkg_path%'
+    software_title: '%NAME%'
+    version: '%version%'
+    fleet_api_base: '%FLEET_API_BASE%'
+    fleet_api_token: '%FLEET_API_TOKEN%'
+    team_id: '%FLEET_TEAM_ID%'
+    # Direct mode - no GitOps
+    use_gitops: false
+    self_service: true
+    labels_include_any:
+      - "Workstations"
+  Processor: FleetImporter
+```
 
 ---
 
@@ -86,9 +163,10 @@ All inputs can be provided as AutoPkg variables in your recipe or via `-k` overr
 | `fleet_api_base` | Yes | str | Fleet base URL, for example `https://fleet.example.com`. |
 | `fleet_api_token` | Yes | str | Fleet API token. |
 | `team_id` | Yes | int | Fleet Team ID for the upload. |
-| `git_repo_url` | Yes | str | HTTPS URL of your Fleet GitOps repo. |
-| `team_yaml_path` | Yes | str | Path to team YAML in repo, for example `teams/workstations.yml`. |
-| `github_repo` | Yes | str | `owner/repo` for PR creation. |
+| `use_gitops` | No | bool | Enable GitOps workflow (branch, YAML, PR). Defaults to `true`. When `false`, only uploads to Fleet without Git operations. |
+| `git_repo_url` | Conditional | str | HTTPS URL of your Fleet GitOps repo. **Required when `use_gitops=true`**. |
+| `team_yaml_path` | No | str | Path to team YAML in repo, for example `teams/workstations.yml`. **(Deprecated)** Team YAML is no longer automatically updated. |
+| `github_repo` | Conditional | str | `owner/repo` for PR creation. **Required when `use_gitops=true`** (auto-derived if omitted). |
 | `platform` | No | str | Defaults to `darwin`. Accepts `darwin`, `windows`, `linux`, `ios`, `ipados`. |
 | `self_service` | No | bool | Make available in self service. Default `true`. |
 | `automatic_install` | No | bool | On macOS, create automatic install policy. Default `false`. |
@@ -159,11 +237,11 @@ software:
 
 | Name | Description |
 |------|-------------|
-| `fleet_title_id` | Fleet software title ID returned by the upload API. |
-| `fleet_installer_id` | Fleet installer ID returned by the upload API. |
-| `git_branch` | Created branch name. |
-| `pull_request_url` | URL of the created or found pull request. |
-| `hash_sha256` | SHA-256 hash of the uploaded package, as returned by Fleet. |
+| `fleet_title_id` | Fleet software title ID returned by the upload API. Available in both modes. |
+| `fleet_installer_id` | Fleet installer ID returned by the upload API. Available in both modes. |
+| `hash_sha256` | SHA-256 hash of the uploaded package, as returned by Fleet. Available in both modes. |
+| `git_branch` | Created branch name. Empty string when `use_gitops=false`. |
+| `pull_request_url` | URL of the created or found pull request. Empty string when `use_gitops=false`. |
 
 ---
 

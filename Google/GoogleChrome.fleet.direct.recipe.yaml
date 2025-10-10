@@ -1,0 +1,31 @@
+Description: "Builds Google Chrome.pkg using the upstream recipe, then uploads directly to Fleet without GitOps (use_gitops=false)."
+Identifier: com.github.kitzy.fleet.direct.GoogleChrome
+Input:
+  NAME: Google Chrome
+MinimumVersion: "2.0"
+ParentRecipe: com.github.autopkg.pkg.googlechrome
+Process:
+- Arguments:
+    # Core package info (from parent recipe)
+    pkg_path: "%pkg_path%"
+    software_title: "%NAME%"
+    version: "%version%"
+    
+    # Fleet API configuration (required)
+    fleet_api_base: "%FLEET_API_BASE%"
+    fleet_api_token: "%FLEET_API_TOKEN%"
+    team_id: "%FLEET_TEAM_ID%"
+    
+    # Direct mode - no GitOps
+    use_gitops: false
+    
+    # Software configuration applied via Fleet API
+    self_service: true
+    platform: darwin
+    
+    # Optional: targeting labels (only one of include/exclude can be used)
+    # labels_include_any:
+    #   - "Workstations"
+    # labels_exclude_any:
+    #   - "Servers"
+  Processor: com.github.kitzy.FleetImporter/FleetImporter

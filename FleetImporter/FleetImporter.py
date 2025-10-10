@@ -2,10 +2,14 @@
 #
 # FleetImporter AutoPkg Processor
 #
-# Uploads a package to Fleet and updates a Fleet GitOps repo with software YAML,
+# Uploads a package to Fleet and optionally updates a Fleet GitOps repo with software YAML,
 # commits on a new branch, and opens a PR.
 #
-# Requires: PyYAML and git CLI available.
+# Supports two modes:
+# 1. GitOps mode (use_gitops=True, default): Uploads package to Fleet AND updates GitOps repo
+# 2. Direct mode (use_gitops=False): Only uploads package to Fleet without Git operations
+#
+# Requires: PyYAML (always) and git CLI (only when use_gitops=True).
 #
 
 from __future__ import annotations
@@ -54,7 +58,25 @@ GITHUB_REVIEWER_TIMEOUT = 30
 
 
 class FleetImporter(Processor):
-    """Upload AutoPkg-built installer to Fleet and update GitOps YAML in a PR."""
+    """
+    Upload AutoPkg-built installer to Fleet, with optional GitOps workflow.
+
+    This processor supports two modes of operation:
+
+    1. **GitOps mode** (use_gitops=True, default):
+       - Uploads package to Fleet
+       - Updates GitOps repository with software YAML
+       - Creates a feature branch and opens a pull request
+       - Requires git_repo_url and GitHub credentials
+
+    2. **Direct mode** (use_gitops=False):
+       - Uploads package to Fleet with full configuration
+       - No Git operations or pull requests
+       - Useful for testing, small environments, or non-GitOps workflows
+       - All package options (self_service, labels, scripts) are set via Fleet API
+
+    The processor ensures backward compatibility by defaulting to GitOps mode.
+    """
 
     description = __doc__
     input_variables = {
@@ -130,10 +152,20 @@ class FleetImporter(Processor):
             "default": "",
             "description": "Post-install script body (string).",
         },
+        # --- GitOps mode control ---
+        "use_gitops": {
+            "required": False,
+            "default": True,
+            "description": (
+                "Whether to use GitOps workflow (update repo, create PR). "
+                "When False, only uploads package to Fleet without Git operations. "
+                "Defaults to True for backward compatibility."
+            ),
+        },
         # --- Git / GitHub ---
         "git_repo_url": {
-            "required": True,
-            "description": "Git URL of your Fleet GitOps repo (HTTPS).",
+            "required": False,
+            "description": "Git URL of your Fleet GitOps repo (HTTPS). Required when use_gitops=True.",
         },
         "git_base_branch": {
             "required": False,
@@ -176,13 +208,17 @@ class FleetImporter(Processor):
             "required": False,
             "description": (
                 "GitHub repo in 'owner/repo' form for PR creation. "
-                "If omitted, derived from git_repo_url."
+                "If omitted, derived from git_repo_url. "
+                "Only used when use_gitops=True."
             ),
         },
         "github_token": {
             "required": False,
             "default": "",
-            "description": "GitHub token. If empty, will use FLEET_GITOPS_GITHUB_TOKEN env.",
+            "description": (
+                "GitHub token. If empty, will use FLEET_GITOPS_GITHUB_TOKEN env. "
+                "Only used when use_gitops=True."
+            ),
         },
         "pr_labels": {
             "required": False,
@@ -263,6 +299,9 @@ class FleetImporter(Processor):
         fleet_token = self.env["fleet_api_token"]
         team_id = int(self.env["team_id"])
 
+        # GitOps mode control
+        use_gitops = bool(self.env.get("use_gitops", True))
+
         # Fleet options
         self_service = bool(self.env.get("self_service", False))
         automatic_install = bool(self.env.get("automatic_install", False))
@@ -273,44 +312,64 @@ class FleetImporter(Processor):
         pre_install_query = self.env.get("pre_install_query", "")
         post_install_script = self.env.get("post_install_script", "")
 
-        # Git / GitHub
-        git_repo_url = self.env["git_repo_url"]
-        git_base_branch = self.env.get("git_base_branch", DEFAULT_GIT_BASE_BRANCH)
-        author_name = self.env.get("git_author_name", DEFAULT_GIT_AUTHOR_NAME)
-        author_email = self.env.get("git_author_email", DEFAULT_GIT_AUTHOR_EMAIL)
-        software_dir = self.env.get("software_dir", DEFAULT_SOFTWARE_DIR)
-        package_yaml_suffix = self.env.get(
-            "package_yaml_suffix", DEFAULT_PACKAGE_YAML_SUFFIX
-        )
-        team_yaml_prefix = self.env.get(
-            "team_yaml_package_path_prefix", DEFAULT_TEAM_YAML_PREFIX
-        )
-        github_repo = self.env.get("github_repo") or self._derive_github_repo(
-            git_repo_url
-        )
-        if not github_repo:
-            raise ProcessorError(
-                "github_repo not provided and could not derive from git_repo_url"
+        # Git / GitHub - only validate if use_gitops is True
+        if use_gitops:
+            git_repo_url = self.env.get("git_repo_url", "")
+            if not git_repo_url:
+                raise ProcessorError("git_repo_url is required when use_gitops=True")
+            git_base_branch = self.env.get("git_base_branch", DEFAULT_GIT_BASE_BRANCH)
+            author_name = self.env.get("git_author_name", DEFAULT_GIT_AUTHOR_NAME)
+            author_email = self.env.get("git_author_email", DEFAULT_GIT_AUTHOR_EMAIL)
+            software_dir = self.env.get("software_dir", DEFAULT_SOFTWARE_DIR)
+            package_yaml_suffix = self.env.get(
+                "package_yaml_suffix", DEFAULT_PACKAGE_YAML_SUFFIX
             )
-        github_token = self.env.get("github_token") or os.environ.get(
-            "FLEET_GITOPS_GITHUB_TOKEN", ""
-        )
-        if not github_token:
-            raise ProcessorError(
-                "GitHub token not provided (github_token or FLEET_GITOPS_GITHUB_TOKEN env)."
+            team_yaml_prefix = self.env.get(
+                "team_yaml_package_path_prefix", DEFAULT_TEAM_YAML_PREFIX
             )
-        pr_labels = list(self.env.get("pr_labels", []))
+            github_repo = self.env.get("github_repo") or self._derive_github_repo(
+                git_repo_url
+            )
+            if not github_repo:
+                raise ProcessorError(
+                    "github_repo not provided and could not derive from git_repo_url"
+                )
+            github_token = self.env.get("github_token") or os.environ.get(
+                "FLEET_GITOPS_GITHUB_TOKEN", ""
+            )
+            if not github_token:
+                raise ProcessorError(
+                    "GitHub token not provided (github_token or FLEET_GITOPS_GITHUB_TOKEN env)."
+                )
+            pr_labels = list(self.env.get("pr_labels", []))
 
-        branch_prefix = self.env.get("branch_prefix", "").strip()
-        pr_reviewer = self.env.get("PR_REVIEWER", "") or os.environ.get(
-            "PR_REVIEWER", ""
-        )
-        pr_reviewer = pr_reviewer.strip()
+            branch_prefix = self.env.get("branch_prefix", "").strip()
+            pr_reviewer = self.env.get("PR_REVIEWER", "") or os.environ.get(
+                "PR_REVIEWER", ""
+            )
+            pr_reviewer = pr_reviewer.strip()
 
-        # Slug
-        software_slug = self.env.get("software_slug", "").strip() or self._slugify(
-            software_title
-        )
+            # Slug
+            software_slug = self.env.get("software_slug", "").strip() or self._slugify(
+                software_title
+            )
+        else:
+            # Non-GitOps mode: set defaults for variables that won't be used
+            git_repo_url = ""
+            git_base_branch = ""
+            author_name = ""
+            author_email = ""
+            software_dir = ""
+            package_yaml_suffix = ""
+            team_yaml_prefix = ""
+            github_repo = ""
+            github_token = ""
+            pr_labels = []
+            branch_prefix = ""
+            pr_reviewer = ""
+            software_slug = self.env.get("software_slug", "").strip() or self._slugify(
+                software_title
+            )
 
         # Query Fleet API to get server version for format detection
         self.output("Querying Fleet server version...")
@@ -390,6 +449,21 @@ class FleetImporter(Processor):
             # Use our version, not Fleet's returned version which may be incorrect
             returned_version = version
 
+        # Non-GitOps mode: set outputs and exit early
+        if not use_gitops:
+            self.output(
+                f"Non-GitOps mode: Package uploaded to Fleet. "
+                f"Title ID: {title_id}, Installer ID: {installer_id}"
+            )
+            self.env["fleet_title_id"] = title_id
+            self.env["fleet_installer_id"] = installer_id
+            self.env["git_branch"] = ""
+            self.env["pull_request_url"] = ""
+            if hash_sha256:
+                self.env["hash_sha256"] = hash_sha256
+            return
+
+        # GitOps mode: proceed with Git operations
         # Prepare repo in a temp dir
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_dir = Path(tmpdir) / "repo"
