@@ -740,8 +740,25 @@ class FleetImporter(Processor):
                         self.output(
                             f"Checking {len(versions)} version(s) for '{matching_title.get('name')}'"
                         )
-                        for ver in versions:
-                            ver_string = ver.get("version", "")
+                        for idx, ver in enumerate(versions):
+                            # Debug: show what fields are in the version object
+                            if isinstance(ver, dict):
+                                ver_string = ver.get("version", "")
+                                self.output(
+                                    f"  Version {idx + 1}: '{ver_string}' (fields: {list(ver.keys())})"
+                                )
+                            elif isinstance(ver, str):
+                                # Sometimes versions might be returned as strings directly
+                                ver_string = ver
+                                self.output(
+                                    f"  Version {idx + 1}: '{ver_string}' (string)"
+                                )
+                            else:
+                                self.output(
+                                    f"  Version {idx + 1}: unexpected type {type(ver)}"
+                                )
+                                continue
+
                             if ver_string == version:
                                 # Hash is at the title level, not version level
                                 hash_sha256 = matching_title.get("hash_sha256")
