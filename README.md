@@ -174,12 +174,12 @@ export AWS_S3_BUCKET="my-fleet-packages"
 export AWS_CLOUDFRONT_DOMAIN="cdn.example.com"
 
 # GitOps repository
-export GITOPS_REPO_URL="https://github.com/org/fleet-gitops.git"
-export GITOPS_SOFTWARE_DIR="lib/macos/software"  # Default, can be omitted
-export GITOPS_TEAM_YAML_PATH="teams/team-name.yml"
+export FLEET_GITOPS_REPO_URL="https://github.com/org/fleet-gitops.git"
+export FLEET_GITOPS_SOFTWARE_DIR="lib/macos/software"  # Default, can be omitted
+export FLEET_GITOPS_TEAM_YAML_PATH="teams/team-name.yml"
 
 # GitHub authentication
-export GITHUB_TOKEN="your-github-token"
+export FLEET_GITOPS_GITHUB_TOKEN="your-github-token"
 ```
 
 ### GitOps Recipe Example
@@ -189,8 +189,8 @@ Description: 'Builds GoogleChrome.pkg, uploads to S3, and creates GitOps PR'
 Identifier: com.github.kitzy.fleet.gitops.GoogleChrome
 Input:
   NAME: Google Chrome
-  GITOPS_SOFTWARE_DIR: lib/macos/software
-  GITOPS_TEAM_YAML_PATH: teams/workstations.yml
+  FLEET_GITOPS_SOFTWARE_DIR: lib/macos/software
+  FLEET_GITOPS_TEAM_YAML_PATH: teams/workstations.yml
 MinimumVersion: '2.0'
 ParentRecipe: com.github.autopkg.pkg.googlechrome
 Process:
@@ -201,10 +201,10 @@ Process:
     gitops_mode: true
     aws_s3_bucket: '%AWS_S3_BUCKET%'
     aws_cloudfront_domain: '%AWS_CLOUDFRONT_DOMAIN%'
-    gitops_repo_url: '%GITOPS_REPO_URL%'
-    gitops_software_dir: '%GITOPS_SOFTWARE_DIR%'
-    gitops_team_yaml_path: '%GITOPS_TEAM_YAML_PATH%'
-    github_token: '%GITHUB_TOKEN%'
+    gitops_repo_url: '%FLEET_GITOPS_REPO_URL%'
+    gitops_software_dir: '%FLEET_GITOPS_SOFTWARE_DIR%'
+    gitops_team_yaml_path: '%FLEET_GITOPS_TEAM_YAML_PATH%'
+    github_token: '%FLEET_GITOPS_GITHUB_TOKEN%'
     s3_retention_versions: 3
     self_service: true
     labels_include_any:
@@ -215,7 +215,7 @@ Process:
 This makes it easy to override the paths when running recipes:
 ```bash
 autopkg run GoogleChrome.fleet.gitops.recipe.yaml \
-  -k GITOPS_TEAM_YAML_PATH="teams/engineering.yml"
+  -k FLEET_GITOPS_TEAM_YAML_PATH="teams/engineering.yml"
 ```
 
 ### GitOps Mode Arguments

@@ -106,20 +106,20 @@ class FleetImporter(Processor):
         },
         "gitops_repo_url": {
             "required": False,
-            "description": "GitOps repository URL (required for GitOps mode), e.g., https://github.com/org/fleet-gitops.git",
+            "description": "GitOps repository URL (required for GitOps mode), e.g., https://github.com/org/fleet-gitops.git. Use FLEET_GITOPS_REPO_URL environment variable.",
         },
         "gitops_software_dir": {
             "required": False,
             "default": "lib/macos/software",
-            "description": "Directory for software package YAMLs within GitOps repo (default: lib/macos/software).",
+            "description": "Directory for software package YAMLs within GitOps repo (default: lib/macos/software). Use FLEET_GITOPS_SOFTWARE_DIR environment variable.",
         },
         "gitops_team_yaml_path": {
             "required": False,
-            "description": "Path to team YAML file within GitOps repo (required for GitOps mode), e.g., teams/team-name.yml",
+            "description": "Path to team YAML file within GitOps repo (required for GitOps mode), e.g., teams/team-name.yml. Use FLEET_GITOPS_TEAM_YAML_PATH environment variable.",
         },
         "github_token": {
             "required": False,
-            "description": "GitHub personal access token for cloning and creating PRs (required for GitOps mode).",
+            "description": "GitHub personal access token for cloning and creating PRs (required for GitOps mode). Use FLEET_GITOPS_GITHUB_TOKEN environment variable.",
         },
         "s3_retention_versions": {
             "required": False,
