@@ -170,10 +170,11 @@ export AWS_DEFAULT_REGION="us-east-1"
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "FleetPackageUpload",
+      "Sid": "FleetPackageManagement",
       "Effect": "Allow",
       "Action": [
-        "s3:PutObject"
+        "s3:PutObject",
+        "s3:DeleteObject"
       ],
       "Resource": "arn:aws:s3:::my-fleet-packages/software/*"
     },
@@ -189,20 +190,12 @@ export AWS_DEFAULT_REGION="us-east-1"
           "s3:prefix": "software/*"
         }
       }
-    },
-    {
-      "Sid": "FleetPackageCleanup",
-      "Effect": "Allow",
-      "Action": [
-        "s3:DeleteObject"
-      ],
-      "Resource": "arn:aws:s3:::my-fleet-packages/software/*"
     }
   ]
 }
 ```
 
-Replace `my-fleet-packages` with your actual bucket name. This policy is scoped to only the `software/` prefix where packages are stored.
+Replace `my-fleet-packages` with your actual bucket name. This policy grants access only to objects within the `software/` prefix - the processor will automatically create this path structure when uploading packages (S3 doesn't require pre-existing directories).
 
 **GitHub Permissions Required:**
 - GitHub personal access token with `repo` scope
