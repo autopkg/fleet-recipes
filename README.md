@@ -162,6 +162,39 @@ export AWS_DEFAULT_REGION="us-east-1"
 - `s3:ListBucket` - List existing versions for cleanup
 - `s3:DeleteObject` - Remove old versions based on retention policy
 
+**Example IAM Policy:**
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "FleetPackageManagement",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::my-fleet-packages/software/*"
+    },
+    {
+      "Sid": "FleetPackageList",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::my-fleet-packages",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "software/*"
+        }
+      }
+    }
+  ]
+}
+```
+
+Replace `my-fleet-packages` with your actual bucket name. This policy grants access only to objects within the `software/` prefix - the processor will automatically create this path structure when uploading packages (S3 doesn't require pre-existing directories).
+
 **GitHub Permissions Required:**
 - GitHub personal access token with `repo` scope
 - Write access to the GitOps repository
