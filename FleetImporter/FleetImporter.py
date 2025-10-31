@@ -25,7 +25,6 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-import requests
 import yaml
 from autopkglib import Processor, ProcessorError
 
@@ -587,20 +586,24 @@ class FleetImporter(Processor):
             head_headers = self._aws_sign_v4(
                 "HEAD", url, region, "s3", access_key, secret_key
             )
-            head_response = requests.head(url, headers=head_headers, timeout=30)
-
-            if head_response.status_code == 200:
-                self.output(
-                    f"Package {software_title} {version} already exists in S3 at {s3_key}. Skipping upload."
-                )
-                return s3_key
-            elif head_response.status_code == 404:
-                self.output("Package not found in S3, proceeding with upload")
-            else:
-                # Some other error occurred
-                raise ProcessorError(
-                    f"S3 HEAD request failed with status {head_response.status_code}: {head_response.text}"
-                )
+            head_request = urllib.request.Request(
+                url, headers=head_headers, method="HEAD"
+            )
+            try:
+                with urllib.request.urlopen(head_request, timeout=30) as head_response:
+                    if head_response.getcode() == 200:
+                        self.output(
+                            f"Package {software_title} {version} already exists in S3 at {s3_key}. Skipping upload."
+                        )
+                        return s3_key
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    self.output("Package not found in S3, proceeding with upload")
+                else:
+                    # Some other error occurred
+                    raise ProcessorError(
+                        f"S3 HEAD request failed with status {e.code}: {e.read().decode()}"
+                    )
 
             # Upload file using PUT request
             self.output(f"Uploading to s3://{bucket}/{s3_key}")
@@ -622,19 +625,25 @@ class FleetImporter(Processor):
             )
 
             # Upload to S3
-            put_response = requests.put(
-                url, data=file_content, headers=put_headers, timeout=900
+            put_request = urllib.request.Request(
+                url, data=file_content, headers=put_headers, method="PUT"
             )
 
-            if put_response.status_code not in (200, 201):
+            try:
+                with urllib.request.urlopen(put_request, timeout=900) as put_response:
+                    if put_response.getcode() not in (200, 201):
+                        raise ProcessorError(
+                            f"S3 upload failed with status {put_response.getcode()}: {put_response.read().decode()}"
+                        )
+            except urllib.error.HTTPError as e:
                 raise ProcessorError(
-                    f"S3 upload failed with status {put_response.status_code}: {put_response.text}"
+                    f"S3 upload failed with status {e.code}: {e.read().decode()}"
                 )
 
             self.output(f"Upload complete: s3://{bucket}/{s3_key}")
             return s3_key
 
-        except requests.RequestException as e:
+        except (urllib.error.URLError, OSError) as e:
             raise ProcessorError(f"S3 upload failed: {e}")
 
     def _construct_cloudfront_url(self, cloudfront_domain: str, s3_key: str) -> str:
@@ -682,15 +691,22 @@ class FleetImporter(Processor):
             list_headers = self._aws_sign_v4(
                 "GET", list_url, region, "s3", access_key, secret_key
             )
-            list_response = requests.get(list_url, headers=list_headers, timeout=30)
+            list_request = urllib.request.Request(list_url, headers=list_headers)
 
-            if list_response.status_code != 200:
+            try:
+                with urllib.request.urlopen(list_request, timeout=30) as list_response:
+                    if list_response.getcode() != 200:
+                        raise ProcessorError(
+                            f"S3 list failed with status {list_response.getcode()}: {list_response.read().decode()}"
+                        )
+                    list_content = list_response.read()
+            except urllib.error.HTTPError as e:
                 raise ProcessorError(
-                    f"S3 list failed with status {list_response.status_code}: {list_response.text}"
+                    f"S3 list failed with status {e.code}: {e.read().decode()}"
                 )
 
             # Parse XML response
-            root = ET.fromstring(list_response.content)
+            root = ET.fromstring(list_content)
             ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
             contents = root.findall("s3:Contents", ns)
 
@@ -756,20 +772,26 @@ class FleetImporter(Processor):
                     delete_headers = self._aws_sign_v4(
                         "DELETE", delete_url, region, "s3", access_key, secret_key
                     )
-                    delete_response = requests.delete(
-                        delete_url, headers=delete_headers, timeout=30
+                    delete_request = urllib.request.Request(
+                        delete_url, headers=delete_headers, method="DELETE"
                     )
-                    if delete_response.status_code not in (200, 204):
-                        self.output(
-                            f"Warning: Failed to delete {key}: {delete_response.status_code}"
-                        )
+                    try:
+                        with urllib.request.urlopen(
+                            delete_request, timeout=30
+                        ) as delete_response:
+                            if delete_response.getcode() not in (200, 204):
+                                self.output(
+                                    f"Warning: Failed to delete {key}: {delete_response.getcode()}"
+                                )
+                    except urllib.error.HTTPError as e:
+                        self.output(f"Warning: Failed to delete {key}: {e.code}")
 
             self.output(
                 f"Cleanup complete. Kept versions: {versions_to_keep}, "
                 f"Deleted versions: {versions_to_delete}"
             )
 
-        except requests.RequestException as e:
+        except (urllib.error.URLError, urllib.error.HTTPError) as e:
             # Log error but don't fail the entire workflow
             self.output(f"Warning: S3 cleanup failed: {e}")
 

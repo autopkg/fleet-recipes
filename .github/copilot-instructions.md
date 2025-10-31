@@ -7,9 +7,10 @@ Always reference these instructions first and fallback to search or bash command
 ## Working Effectively
 
 ### Bootstrap and Setup (macOS required for AutoPkg)
-- Install Python dependencies:
+- Install Python dependencies for development (code formatting/linting):
   - `python3 -m pip install --upgrade pip`
-  - `python3 -m pip install requests PyYAML black isort flake8 flake8-bugbear` -- takes 10-30 seconds. NEVER CANCEL.
+  - `python3 -m pip install black isort flake8 flake8-bugbear` -- takes 10-30 seconds. NEVER CANCEL.
+  - Note: The processor uses only native Python libraries available in AutoPkg's bundled Python (no external dependencies required for runtime)
 - Install AutoPkg (macOS only):
   - `brew install autopkg` -- takes 2-5 minutes. NEVER CANCEL. Set timeout to 10+ minutes.
   - `autopkg version`
@@ -18,10 +19,10 @@ Always reference these instructions first and fallback to search or bash command
   - `autopkg repo-add https://github.com/autopkg/homebysix-recipes.git` -- takes 30-60 seconds. NEVER CANCEL.
   - `autopkg repo-add https://github.com/fleetdm/fleet-autopkg-recipes.git` -- takes 30-60 seconds. NEVER CANCEL.
 - Validate Python syntax and code style:
-  - `python3 -m py_compile FleetImporter.py` -- takes < 1 second.
-  - `python3 -m black --check FleetImporter.py` -- takes < 1 second.
-  - `python3 -m isort --check-only FleetImporter.py` -- takes < 1 second.
-  - `python3 -m flake8 FleetImporter.py` -- takes < 1 second.
+  - `python3 -m py_compile FleetImporter/FleetImporter.py` -- takes < 1 second.
+  - `python3 -m black --check FleetImporter/FleetImporter.py` -- takes < 1 second.
+  - `python3 -m isort --check-only FleetImporter/FleetImporter.py` -- takes < 1 second.
+  - `python3 -m flake8 FleetImporter/FleetImporter.py` -- takes < 1 second.
 
 ### Critical macOS Setup Notes
 - AutoPkg ONLY works on macOS. Do not attempt to install on Linux/Windows.
@@ -36,16 +37,21 @@ Always reference these instructions first and fallback to search or bash command
 - Set `GIT_TERMINAL_PROMPT=0` to prevent interactive Git authentication prompts
 
 ### Testing and Validation
-- Test Python dependencies: `python3 -c "import yaml, requests; print('Dependencies OK')"`
-- Validate recipe YAML syntax: `python3 -c "import yaml; yaml.safe_load(open('GoogleChrome.fleet.recipe.yaml'))"`
+- Test AutoPkg Python has required modules: `/Library/AutoPkg/Python3/Python.framework/Versions/Current/bin/python3 -c "import yaml, urllib.request, json; print('Dependencies OK')"`
+- Validate recipe YAML syntax: `python3 -c "import yaml; yaml.safe_load(open('Google/GoogleChrome.fleet.recipe.yaml'))"`
 - Test Git operations: `git status && git log --oneline -5`
-- Run recipe locally (macOS only): `autopkg run GoogleChrome.fleet.recipe.yaml -k FLEET_API_TOKEN="$FLEET_API_TOKEN" -k FLEET_GITOPS_GITHUB_TOKEN="$FLEET_GITOPS_GITHUB_TOKEN"`
+- Run recipe locally (macOS only): `autopkg run Google/GoogleChrome.fleet.recipe.yaml -k FLEET_API_TOKEN="$FLEET_API_TOKEN" -k FLEET_GITOPS_GITHUB_TOKEN="$FLEET_GITOPS_GITHUB_TOKEN"`
 
 ### File Validation
 - Always validate YAML syntax when modifying recipe files
-- Check Python syntax with `python3 -m py_compile FleetImporter.py` before committing
+- Check Python syntax with `python3 -m py_compile FleetImporter/FleetImporter.py` before committing
 - Test environment variable substitution in recipes
 - **ALWAYS write recipes in YAML format, not XML** - This repository uses YAML recipes exclusively
+
+### Runtime Dependencies
+- **The FleetImporter processor uses ONLY native Python libraries** - no external pip packages required at runtime
+- AutoPkg's bundled Python 3.10+ includes all necessary modules: `urllib`, `json`, `yaml`, `hashlib`, etc.
+- Development dependencies (black, isort, flake8) are only needed for code formatting/linting, not for running recipes
 
 ## AutoPkg Code Style Requirements
 
@@ -72,11 +78,11 @@ This project follows AutoPkg's strict code style requirements. ALL Python code m
 
 ### After Making Code Changes
 - ALWAYS run AutoPkg code style requirements (required by AutoPkg project):
-  - `python3 -m py_compile FleetImporter.py` -- validate syntax
-  - `python3 -m black --check --diff FleetImporter.py` -- check formatting
-  - `python3 -m isort --check-only --diff FleetImporter.py` -- check import sorting
-  - `python3 -m flake8 FleetImporter.py` -- check linting with bugbear
-- Test YAML parsing: `python3 -c "import yaml; [yaml.safe_load(open(f)) for f in ['GoogleChrome.fleet.recipe.yaml', 'GithubDesktop.fleet.recipe.yaml']]"`
+  - `python3 -m py_compile FleetImporter/FleetImporter.py` -- validate syntax
+  - `python3 -m black --check --diff FleetImporter/FleetImporter.py` -- check formatting
+  - `python3 -m isort --check-only --diff FleetImporter/FleetImporter.py` -- check import sorting
+  - `python3 -m flake8 FleetImporter/FleetImporter.py` -- check linting with bugbear
+- Test YAML parsing: `python3 -c "import yaml; [yaml.safe_load(open(f)) for f in ['Google/GoogleChrome.fleet.recipe.yaml', 'GitHub/GithubDesktop.fleet.recipe.yaml']]"`
 - Validate Git operations work correctly
 - If modifying the processor, test with a sample recipe using autopkg (requires macOS)
 
@@ -89,12 +95,12 @@ This project follows AutoPkg's strict code style requirements. ALL Python code m
 ## Build and Test Commands
 
 ### Syntax Validation (Linux/macOS)
-- `python3 -m py_compile FleetImporter.py` -- takes < 1 second
-- `python3 -c "import yaml; yaml.safe_load(open('GoogleChrome.fleet.recipe.yaml'))"` -- takes < 1 second
+- `python3 -m py_compile FleetImporter/FleetImporter.py` -- takes < 1 second
+- `python3 -c "import yaml; yaml.safe_load(open('Google/GoogleChrome.fleet.recipe.yaml'))"` -- takes < 1 second
 
 ### Full Recipe Testing (macOS only)
-- `autopkg run GoogleChrome.fleet.recipe.yaml -v` -- takes 5-15 minutes for download/build. NEVER CANCEL. Set timeout to 30+ minutes.
-- `autopkg run GithubDesktop.fleet.recipe.yaml -v` -- takes 5-15 minutes for download/build. NEVER CANCEL. Set timeout to 30+ minutes.
+- `autopkg run Google/GoogleChrome.fleet.recipe.yaml -v` -- takes 5-15 minutes for download/build. NEVER CANCEL. Set timeout to 30+ minutes.
+- `autopkg run GitHub/GithubDesktop.fleet.recipe.yaml -v` -- takes 5-15 minutes for download/build. NEVER CANCEL. Set timeout to 30+ minutes.
 
 ### Environment Testing
 - Check Python version: `python3 --version` (requires 3.9+)
@@ -104,14 +110,14 @@ This project follows AutoPkg's strict code style requirements. ALL Python code m
 ## Repository Structure
 
 ### Key Files
-- `FleetImporter.py` - Main AutoPkg processor for Fleet integration
-- `GoogleChrome.fleet.recipe.yaml` - Example recipe for Google Chrome
-- `GithubDesktop.fleet.recipe.yaml` - Example recipe for GitHub Desktop
+- `FleetImporter/FleetImporter.py` - Main AutoPkg processor for Fleet integration
+- `Google/GoogleChrome.fleet.recipe.yaml` - Example recipe for Google Chrome
+- `GitHub/GithubDesktop.fleet.recipe.yaml` - Example recipe for GitHub Desktop
 - `README.md` - Comprehensive documentation
 - `.gitignore` - Excludes Python cache and IDE files
 
 ### File Locations
-- Main processor: `./FleetImporter.py`
+- Main processor: `./FleetImporter/FleetImporter.py`
 - Recipe files: `*.fleet.recipe.yaml`
 - Documentation: `./README.md`
 
@@ -141,15 +147,15 @@ Process:
 ## Common Tasks
 
 ### Creating New Recipes
-- Copy an existing recipe file (e.g., `GoogleChrome.fleet.recipe.yaml`)
+- Copy an existing recipe file (e.g., `Google/GoogleChrome.fleet.recipe.yaml`)
 - Update the `ParentRecipe` to point to upstream AutoPkg recipe
 - Modify processor arguments for your specific Fleet/GitOps configuration
 - Test with `autopkg run YourNew.fleet.recipe.yaml -v`
 
 ### Modifying the Processor
-- Edit `FleetImporter.py`
-- Validate syntax: `python3 -m py_compile FleetImporter.py`
-- Test import: `python3 -c "import sys; sys.path.insert(0, '.'); from FleetImporter import FleetImporter"`
+- Edit `FleetImporter/FleetImporter.py`
+- Validate syntax: `python3 -m py_compile FleetImporter/FleetImporter.py`
+- Test import: `python3 -c "import sys; sys.path.insert(0, '.'); from FleetImporter.FleetImporter import FleetImporter"`
 - Test with sample recipe on macOS
 
 ### Local Development Workflow
@@ -269,8 +275,8 @@ export GIT_TERMINAL_PROMPT=0
 ### Immediate Validation (Run These First)
 ```bash
 python3 --version                                    # Should be 3.9+
-python3 -c "import yaml, requests"                   # Test dependencies
-python3 -m py_compile FleetImporter.py         # Validate syntax
+/Library/AutoPkg/Python3/Python.framework/Versions/Current/bin/python3 -c "import yaml, urllib.request, json; print('Dependencies OK')"  # Test AutoPkg Python modules
+python3 -m py_compile FleetImporter/FleetImporter.py # Validate syntax
 git --version                                        # Check Git availability
 ```
 
@@ -282,8 +288,8 @@ export FLEET_API_TOKEN="your-fleet-token"
 export GIT_TERMINAL_PROMPT=0
 
 # Validate all components
-python3 -m py_compile FleetImporter.py
-python3 -c "import yaml; [yaml.safe_load(open(f)) for f in ['GoogleChrome.fleet.recipe.yaml', 'GithubDesktop.fleet.recipe.yaml']]"
+python3 -m py_compile FleetImporter/FleetImporter.py
+python3 -c "import yaml; [yaml.safe_load(open(f)) for f in ['Google/GoogleChrome.fleet.recipe.yaml', 'GitHub/GithubDesktop.fleet.recipe.yaml']]"
 git status && git log --oneline -5
 ```
 
