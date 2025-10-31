@@ -141,7 +141,33 @@ ParentRecipe: com.github.author.pkg.SoftwareName
 Process:
 - Arguments:
     # FleetImporter arguments here
+    icon: SoftwareName.png  # Optional: path to icon file (PNG, square, 120x120-1024x1024px)
   Processor: FleetImporter
+```
+
+### Icon Support
+The FleetImporter processor supports uploading custom icons for software packages in Fleet:
+- **Format**: PNG only
+- **Size**: Square dimensions between 120x120 px and 1024x1024 px
+- **Usage**: Add `icon: IconFilename.png` to recipe Arguments
+- **Path**: Relative to recipe file directory or absolute path
+- **API**: Uses Fleet's `PUT /api/v1/fleet/software/titles/:id/icon` endpoint
+- **Timing**: Icon is uploaded immediately after package upload (direct mode only)
+- **GitOps**: Icon support for GitOps mode not yet implemented
+
+Example:
+```yaml
+Process:
+- Arguments:
+    pkg_path: "%pkg_path%"
+    software_title: "%NAME%"
+    version: "%version%"
+    fleet_api_base: "%FLEET_API_BASE%"
+    fleet_api_token: "%FLEET_API_TOKEN%"
+    team_id: "%FLEET_TEAM_ID%"
+    self_service: true
+    icon: GoogleChrome.png  # Optional icon file
+  Processor: com.github.kitzy.FleetImporter/FleetImporter
 ```
 
 ## Common Tasks
