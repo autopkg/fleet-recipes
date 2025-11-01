@@ -14,6 +14,6 @@ Process:
     team_id: "%FLEET_TEAM_ID%"
     self_service: true
     categories:
-    - Developer Tools
+    - Developer tools
     icon: Claude.png
   Processor: com.github.kitzy.FleetImporter/FleetImporter

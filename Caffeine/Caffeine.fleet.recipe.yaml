@@ -1,8 +1,8 @@
-Description: 'Builds Caffeine.pkg and uploads to Fleet'
+Description: "Builds Caffeine.pkg using the upstream recipe, then uploads to Fleet."
 Identifier: com.github.kitzy.fleet.Caffeine
 Input:
   NAME: Caffeine
-MinimumVersion: '2.0'
+MinimumVersion: "2.0"
 ParentRecipe: com.github.homebysix.pkg.Caffeine
 Process:
 - Arguments:
@@ -15,4 +15,5 @@ Process:
     self_service: true
     categories:
     - Productivity
+    icon: Caffeine.png
   Processor: com.github.kitzy.FleetImporter/FleetImporter

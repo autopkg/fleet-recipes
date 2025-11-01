@@ -1,17 +1,20 @@
-Description: 'Builds GPG Suite.pkg and uploads to Fleet'
+Description: "Builds GPG Suite.pkg using the upstream recipe, then uploads to Fleet."
 Identifier: com.github.kitzy.fleet.GPGSuite
 Input:
   NAME: GPG Suite
-MinimumVersion: '2.0'
+MinimumVersion: "2.0"
 ParentRecipe: com.github.kitzy.pkg.GPGSuite
 Process:
 - Arguments:
     pkg_path: "%pkg_path%"
     software_title: "%NAME%"
     version: "%version%"
-    
     fleet_api_base: "%FLEET_API_BASE%"
     fleet_api_token: "%FLEET_API_TOKEN%"
     team_id: "%FLEET_TEAM_ID%"
     self_service: true
+    categories:
+    - Developer tools
+    - Productivity
+    icon: GPGSuite.png
   Processor: com.github.kitzy.FleetImporter/FleetImporter

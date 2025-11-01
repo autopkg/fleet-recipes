@@ -1,9 +1,9 @@
-Description: "Builds RubyMine.pkg using the upstream recipe, then uploads to Fleet."
-Identifier: com.github.kitzy.fleet.RubyMine
+Description: "Builds Raycast.pkg using the upstream recipe, then uploads to Fleet."
+Identifier: com.github.kitzy.fleet.Raycast
 Input:
-  NAME: RubyMine
+  NAME: Raycast
 MinimumVersion: "2.0"
-ParentRecipe: com.github.kitzy.pkg.RubyMine
+ParentRecipe: com.github.kitzy.pkg.Raycast
 Process:
 - Arguments:
     pkg_path: "%pkg_path%"
@@ -14,6 +14,6 @@ Process:
     team_id: "%FLEET_TEAM_ID%"
     self_service: true
     categories:
-    - Developer tools
-    icon: RubyMine.png
+    - Productivity
+    icon: Raycast.png
   Processor: com.github.kitzy.FleetImporter/FleetImporter

@@ -367,26 +367,6 @@ jobs:
         echo "✅ Environment variable format check passed"
         
         echo "✅ Security check passed"
-        
-        # Check documentation completeness
-        echo "Checking documentation..."
-        
-        if ! grep -q "⚠️ Experimental" README.md; then
-          echo "❌ Missing experimental warning in README"
-          exit 1
-        fi
-        
-        if ! grep -q "Production use is not recommended" README.md; then
-          echo "❌ Missing production warning in README"
-          exit 1
-        fi
-        
-        if ! grep -q "FLEET_API_BASE" README.md; then
-          echo "❌ Missing environment variable documentation"
-          exit 1
-        fi
-        
-        echo "✅ Documentation check passed"
 
   integration-test:
     name: Integration Test

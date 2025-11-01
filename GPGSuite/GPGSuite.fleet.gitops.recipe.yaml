@@ -1,11 +1,11 @@
-Description: "Builds Claude.pkg using the upstream recipe, then uploads to S3 and creates GitOps PR."
-Identifier: com.github.kitzy.fleet.gitops.Claude
+Description: "Builds GPG Suite.pkg using the upstream recipe, then uploads to S3 and creates GitOps PR."
+Identifier: com.github.kitzy.fleet.gitops.GPGSuite
 Input:
-  NAME: Claude
+  NAME: GPG Suite
   FLEET_GITOPS_SOFTWARE_DIR: lib/macos/software
   FLEET_GITOPS_TEAM_YAML_PATH: teams/workstations.yml
 MinimumVersion: "2.0"
-ParentRecipe: com.github.kitzy.pkg.Claude
+ParentRecipe: com.github.kitzy.pkg.GPGSuite
 Process:
 - Arguments:
     pkg_path: "%pkg_path%"
@@ -22,5 +22,5 @@ Process:
     self_service: true
     categories:
     - Developer tools
-    icon: Claude.png
+    icon: GPGSuite.png
   Processor: com.github.kitzy.FleetImporter/FleetImporter
