@@ -562,13 +562,16 @@ class FleetImporter(Processor):
         string_to_sign = f"{algorithm}\n{amz_date}\n{credential_scope}\n{hashlib.sha256(canonical_request.encode()).hexdigest()}"
 
         # Calculate signature
-        def sign(key, msg):
+        def sign(key: bytes, msg: str) -> bytes:
             return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
 
+        # Create signing key
         k_date = sign(f"AWS4{secret_key}".encode("utf-8"), date_stamp)
-        k_region = hmac.new(k_date, region.encode("utf-8"), hashlib.sha256).digest()
-        k_service = hmac.new(k_region, service.encode("utf-8"), hashlib.sha256).digest()
-        k_signing = hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
+        k_region = sign(k_date, region)
+        k_service = sign(k_region, service)
+        k_signing = sign(k_service, "aws4_request")
+
+        # Calculate final signature
         signature = hmac.new(
             k_signing, string_to_sign.encode("utf-8"), hashlib.sha256
         ).hexdigest()
