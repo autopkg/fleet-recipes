@@ -120,20 +120,28 @@ This project follows AutoPkg's strict code style requirements. ALL Python code m
 
 ## Repository Structure
 
-### Key Files
-- `FleetImporter/FleetImporter.py` - Main AutoPkg processor for Fleet integration
-- `Anthropic/Claude.fleet.direct.recipe.yaml` - Example direct mode recipe for Claude
-- `Anthropic/Claude.fleet.gitops.recipe.yaml` - Example GitOps mode recipe for Claude
-- `GitHub/GithubDesktop.fleet.direct.recipe.yaml` - Example direct mode recipe for GitHub Desktop
-- `GitHub/GithubDesktop.fleet.gitops.recipe.yaml` - Example GitOps mode recipe for GitHub Desktop
+### Core Components
+- `.github/` - GitHub workflows and configuration (including these instructions)
+- `FleetImporter/` - Main AutoPkg processor for Fleet integration
+  - `FleetImporter.py` - The processor implementation
 - `README.md` - Comprehensive documentation
 - `.gitignore` - Excludes Python cache and IDE files
 - `.env.example` - Example environment variables for local testing
 
-### File Locations
-- Main processor: `./FleetImporter/FleetImporter.py`
-- Recipe files: `<VendorName>/<SoftwareTitle>.fleet.direct.recipe.yaml` or `<VendorName>/<SoftwareTitle>.fleet.gitops.recipe.yaml`
-- Documentation: `./README.md`
+### Recipe Directories
+**Every directory other than `.github` and `FleetImporter` is a vendor recipe directory.**
+
+The repository structure grows over time as new recipes are added. Current examples include:
+- `Anthropic/` - Claude recipes
+- `Caffeine/` - Caffeine recipes
+- `GitHub/` - GitHub Desktop recipes
+- `GPGSuite/` - GPG Suite recipes
+- `Raycast Technologies/` - Raycast recipes
+- `Signal/` - Signal recipes
+
+Each vendor directory contains direct and/or gitops mode recipes:
+- `<VendorName>/<SoftwareTitle>.fleet.direct.recipe.yaml` - Direct mode (upload to Fleet API)
+- `<VendorName>/<SoftwareTitle>.fleet.gitops.recipe.yaml` - GitOps mode (upload to S3, create PR)
 
 ### Recipe Types
 This repository uses two types of recipes:
