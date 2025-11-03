@@ -15,6 +15,14 @@ FleetImporter extends AutoPkg to integrate with Fleet's software management. It 
 - **Direct mode**: Upload packages directly to Fleet via API
 - **GitOps mode**: Upload to S3 and create pull requests for Git-based configuration management
 
+## Requirements
+
+- **Python 3.9+**: Required by FleetImporter processor
+- **AutoPkg 2.3+**: Required for recipe execution
+- **boto3>=1.18.0**: Required for GitOps mode S3 operations
+  - Automatically installed when needed if not present
+  - Uses only native Python libraries for direct mode
+
 ---
 
 ## Direct mode
@@ -99,6 +107,8 @@ Process:
 Upload packages to S3 and create GitOps pull requests for Fleet configuration management.
 
 > **Note:** GitOps mode requires you to provide your own S3 bucket and CloudFront distribution. When Fleet operates in GitOps mode, it deletes any packages not defined in the YAML files during sync ([fleetdm/fleet#34137](https://github.com/fleetdm/fleet/issues/34137)). By hosting packages externally and using pull requests, you can stage updates and merge them at your own pace.
+
+> **Dependency:** GitOps mode requires `boto3>=1.18.0` for S3 operations. If not already installed, the processor will automatically install it using pip when GitOps mode is first used.
 
 ### Required infrastructure
 

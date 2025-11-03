@@ -39,7 +39,7 @@ except ImportError:
     print("boto3 not found, installing...")
     try:
         subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--quiet", "boto3"],
+            [sys.executable, "-m", "pip", "install", "--quiet", "boto3>=1.18.0"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -70,6 +70,11 @@ class FleetImporter(Processor):
     This processor uploads software packages (.pkg files) to Fleet and configures
     deployment settings including self-service availability, automatic installation,
     host targeting via labels, and custom install/uninstall scripts.
+
+    Dependencies:
+        - boto3>=1.18.0: Required for GitOps mode S3 operations. Will be automatically
+          installed if not present when GitOps mode is used.
+        - Native Python libraries only for direct mode (no external dependencies)
     """
 
     description = __doc__
