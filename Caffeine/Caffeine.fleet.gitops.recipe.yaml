@@ -10,7 +10,7 @@ Input:
   CATEGORIES:
   - Productivity
   ICON: Caffeine.png
-MinimumVersion: "2.0"
+MinimumVersion: "2.3"
 ParentRecipe: com.github.homebysix.pkg.Caffeine
 Process:
 - Arguments:

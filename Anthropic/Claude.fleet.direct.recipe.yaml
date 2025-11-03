@@ -6,7 +6,7 @@ Input:
   CATEGORIES:
   - Developer tools
   ICON: Claude.png
-MinimumVersion: "2.0"
+MinimumVersion: "2.3"
 ParentRecipe: com.github.kitzy.pkg.Claude
 Process:
 - Arguments:

@@ -6,7 +6,7 @@ Input:
   CATEGORIES:
   - Communication
   ICON: Signal.png
-MinimumVersion: "2.0"
+MinimumVersion: "2.3"
 ParentRecipe: com.github.jaharmi.pkg.Signal
 Process:
 - Arguments:
