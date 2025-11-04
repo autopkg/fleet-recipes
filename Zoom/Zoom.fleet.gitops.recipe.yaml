@@ -1,0 +1,32 @@
+Description: "Builds Zoom.pkg using the upstream recipe, then uploads to S3 and creates GitOps PR."
+Identifier: com.github.fleet.gitops.Zoom
+Input:
+  NAME: Zoom
+  FLEET_GITOPS_SOFTWARE_DIR: lib/macos/software
+  FLEET_GITOPS_TEAM_YAML_PATH: teams/workstations.yml
+  GITOPS_MODE: true
+  S3_RETENTION_VERSIONS: 0
+  SELF_SERVICE: true
+  CATEGORIES:
+  - Communication
+MinimumVersion: "2.3"
+ParentRecipe: com.github.homebysix.pkg.Zoom
+Process:
+- Arguments:
+    pkg_path: "%pkg_path%"
+    software_title: "%NAME%"
+    version: "%version%"
+    gitops_mode: "%GITOPS_MODE%"
+    aws_s3_bucket: "%AWS_S3_BUCKET%"
+    aws_cloudfront_domain: "%AWS_CLOUDFRONT_DOMAIN%"
+    aws_access_key_id: "%AWS_ACCESS_KEY_ID%"
+    aws_secret_access_key: "%AWS_SECRET_ACCESS_KEY%"
+    aws_default_region: "%AWS_DEFAULT_REGION%"
+    gitops_repo_url: "%FLEET_GITOPS_REPO_URL%"
+    gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
+    gitops_team_yaml_path: "%FLEET_GITOPS_TEAM_YAML_PATH%"
+    github_token: "%FLEET_GITOPS_GITHUB_TOKEN%"
+    s3_retention_versions: "%S3_RETENTION_VERSIONS%"
+    self_service: "%SELF_SERVICE%"
+    categories: "%CATEGORIES%"
+  Processor: com.github.fleet.FleetImporter/FleetImporter

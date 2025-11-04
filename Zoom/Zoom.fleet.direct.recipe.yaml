@@ -1,0 +1,20 @@
+Description: "Builds Zoom.pkg using the upstream recipe, then uploads to Fleet."
+Identifier: com.github.fleet.direct.Zoom
+Input:
+  NAME: Zoom
+  SELF_SERVICE: true
+  CATEGORIES:
+  - Communication
+MinimumVersion: "2.3"
+ParentRecipe: com.github.homebysix.pkg.Zoom
+Process:
+- Arguments:
+    pkg_path: "%pkg_path%"
+    software_title: "%NAME%"
+    version: "%version%"
+    fleet_api_base: "%FLEET_API_BASE%"
+    fleet_api_token: "%FLEET_API_TOKEN%"
+    team_id: "%FLEET_TEAM_ID%"
+    self_service: "%SELF_SERVICE%"
+    categories: "%CATEGORIES%"
+  Processor: com.github.fleet.FleetImporter/FleetImporter
