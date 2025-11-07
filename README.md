@@ -47,7 +47,7 @@ FleetImporter recipes support the following variables. Configuration can be set 
 | `AWS_CLOUDFRONT_DOMAIN` | Not used | Required | - | CloudFront domain for package URLs |
 | `AWS_ACCESS_KEY_ID` | Not used | Optional | - | AWS access key (can use `~/.aws/credentials` instead) |
 | `AWS_SECRET_ACCESS_KEY` | Not used | Optional | - | AWS secret key (can use `~/.aws/credentials` instead) |
-| `AWS_DEFAULT_REGION` | Not used | Optional | `us-east-1` | AWS region for S3 operations |
+| `AWS_DEFAULT_REGION` | Not used | Required | `us-east-1` | AWS region for S3 operations |
 | **GitOps Repository** | | | | |
 | `FLEET_GITOPS_REPO_URL` | Not used | Required | - | Git repository URL for Fleet configuration |
 | `FLEET_GITOPS_GITHUB_TOKEN` | Not used | Required | - | GitHub token with repository write permissions |
