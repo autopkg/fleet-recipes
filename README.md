@@ -26,6 +26,49 @@ Mode is controlled by the `GITOPS_MODE` input variable (default: `false`). Users
 
 ---
 
+## Recipe variables
+
+FleetImporter recipes support the following variables. Configuration can be set via AutoPkg preferences or recipe overrides.
+
+| Variable | Direct Mode | GitOps Mode | Default | Description |
+|----------|-------------|-------------|---------|-------------|
+| **Mode Control** | | | | |
+| `GITOPS_MODE` | Optional | Required | `false` | Set to `true` to enable GitOps mode |
+| **Package Information** | | | | |
+| `pkg_path` | Required | Required | - | Path to the .pkg file (typically from parent recipe) |
+| `software_title` | Required | Required | - | Software display name |
+| `version` | Required | Required | - | Software version (typically from parent recipe) |
+| **Fleet API (Direct Mode)** | | | | |
+| `FLEET_API_BASE` | Required | Not used | - | Fleet server URL (e.g., `https://fleet.example.com`) |
+| `FLEET_API_TOKEN` | Required | Not used | - | Fleet API authentication token |
+| `FLEET_TEAM_ID` | Required | Not used | - | Fleet team ID for software assignment |
+| **AWS S3 (GitOps Mode)** | | | | |
+| `AWS_S3_BUCKET` | Not used | Required | - | S3 bucket name for package storage |
+| `AWS_CLOUDFRONT_DOMAIN` | Not used | Required | - | CloudFront domain for package URLs |
+| `AWS_ACCESS_KEY_ID` | Not used | Optional | - | AWS access key (can use `~/.aws/credentials` instead) |
+| `AWS_SECRET_ACCESS_KEY` | Not used | Optional | - | AWS secret key (can use `~/.aws/credentials` instead) |
+| `AWS_DEFAULT_REGION` | Not used | Optional | `us-east-1` | AWS region for S3 operations |
+| **GitOps Repository** | | | | |
+| `FLEET_GITOPS_REPO_URL` | Not used | Required | - | Git repository URL for Fleet configuration |
+| `FLEET_GITOPS_GITHUB_TOKEN` | Not used | Required | - | GitHub token with repository write permissions |
+| `FLEET_GITOPS_SOFTWARE_DIR` | Not used | Optional | `lib/macos/software` | Directory for software YAML files in GitOps repo |
+| `FLEET_GITOPS_TEAM_YAML_PATH` | Not used | Optional | `teams/workstations.yml` | Path to team YAML file in GitOps repo |
+| **Software Configuration** | | | | |
+| `self_service` | Optional | Optional | `true` | Show software in Fleet Desktop |
+| `automatic_install` | Optional | Optional | `false` | Auto-install on matching devices |
+| `categories` | Optional | Optional | `[]` | Categories for self-service (Browsers, Communication, Developer tools, Productivity) |
+| `labels_include_any` | Optional | Optional | `[]` | Only install on devices with these labels |
+| `labels_exclude_any` | Optional | Optional | `[]` | Exclude devices with these labels |
+| `icon` | Optional | Optional | - | Path to PNG icon (square, 120-1024px, max 100KB). Auto-extracts from app bundle if not provided |
+| `install_script` | Optional | Optional | - | Custom installation script |
+| `uninstall_script` | Optional | Optional | - | Custom uninstall script |
+| `pre_install_query` | Optional | Optional | - | osquery to run before install |
+| `post_install_script` | Optional | Optional | - | Script to run after install |
+| **GitOps-Specific Options** | | | | |
+| `s3_retention_versions` | Not used | Optional | `0` | Number of old package versions to retain in S3 (0 = no pruning) |
+
+---
+
 ## Direct mode
 
 Upload packages directly to your Fleet server. This is the **default mode** for all recipes.
@@ -41,35 +84,6 @@ defaults write com.github.autopkg FLEET_TEAM_ID "1"
 # Run any recipe (defaults to direct mode)
 autopkg run VendorName/SoftwareName.fleet.recipe.yaml
 ```
-
-### Required recipe arguments
-
-```yaml
-Process:
-- Arguments:
-    pkg_path: "%pkg_path%"              # From parent recipe
-    software_title: "%NAME%"             # Software display name
-    version: "%version%"                 # From parent recipe
-    fleet_api_base: "%FLEET_API_BASE%"
-    fleet_api_token: "%FLEET_API_TOKEN%"
-    team_id: "%FLEET_TEAM_ID%"
-  Processor: com.github.fleet.FleetImporter/FleetImporter
-```
-
-### Optional recipe arguments
-
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `self_service` | boolean | `true` | Show in Fleet Desktop |
-| `automatic_install` | boolean | `false` | Auto-install on matching devices |
-| `categories` | array | `[]` | Categories for self-service software (required when `self_service` is `true`). Valid values: Browsers, Communication, Developer tools, Productivity |
-| `labels_include_any` | array | `[]` | Only install on devices with these labels |
-| `labels_exclude_any` | array | `[]` | Exclude devices with these labels |
-| `icon` | string | - | Path to PNG icon (square, 120-1024px, max 100KB). Paths are resolved relative to the recipe directory. If not provided, automatically extracts from app bundle. |
-| `install_script` | string | - | Custom installation script |
-| `uninstall_script` | string | - | Custom uninstall script |
-| `pre_install_query` | string | - | osquery to run before install |
-| `post_install_script` | string | - | Script to run after install |
 
 ---
 
@@ -98,11 +112,11 @@ autopkg run SoftwareName.fleet.recipe.yaml
 
 - AWS S3 bucket for package storage
 - CloudFront distribution pointing to the S3 bucket
-- AWS credentials configured (via `~/.aws/credentials` or environment variables)
+- AWS credentials with read/write access to the S3 bucket
 
 ### Required configuration
 
-Set via AutoPkg preferences (recommended):
+Set via AutoPkg preferences:
 
 ```bash
 defaults write com.github.autopkg AWS_S3_BUCKET "my-fleet-packages"
@@ -113,40 +127,6 @@ defaults write com.github.autopkg AWS_DEFAULT_REGION "us-east-1"
 defaults write com.github.autopkg FLEET_GITOPS_REPO_URL "https://github.com/org/fleet-gitops.git"
 defaults write com.github.autopkg FLEET_GITOPS_GITHUB_TOKEN "your-github-token"
 ```
-
-### Required recipe arguments
-
-```yaml
-Process:
-- Arguments:
-    pkg_path: "%pkg_path%"
-    software_title: "%NAME%"
-    version: "%version%"
-    gitops_mode: true
-    aws_s3_bucket: "%AWS_S3_BUCKET%"
-    aws_cloudfront_domain: "%AWS_CLOUDFRONT_DOMAIN%"
-    aws_access_key_id: "%AWS_ACCESS_KEY_ID%"
-    aws_secret_access_key: "%AWS_SECRET_ACCESS_KEY%"
-    aws_default_region: "%AWS_DEFAULT_REGION%"
-    gitops_repo_url: "%FLEET_GITOPS_REPO_URL%"
-    gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
-    gitops_team_yaml_path: "%FLEET_GITOPS_TEAM_YAML_PATH%"
-    github_token: "%FLEET_GITOPS_GITHUB_TOKEN%"
-  Processor: com.github.fleet.FleetImporter/FleetImporter
-```
-
-### Optional recipe arguments
-
-All [optional arguments](#optional-recipe-arguments) from direct mode, plus:
-
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `s3_retention_versions` | integer | `0` | Number of old package versions to retain in S3 (0 = no pruning) |
-| `aws_access_key_id` | string | - | AWS access key ID for S3 operations |
-| `aws_secret_access_key` | string | - | AWS secret access key for S3 operations |
-| `aws_default_region` | string | `us-east-1` | AWS region for S3 operations |
-| `gitops_software_dir` | string | `lib/macos/software` | Directory for software YAML files |
-| `gitops_team_yaml_path` | string | `teams/workstations.yml` | Path to team YAML file |
 
 ### GitOps workflow
 
