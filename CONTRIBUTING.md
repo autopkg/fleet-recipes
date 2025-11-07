@@ -87,10 +87,10 @@ All arguments should be capable of being overridden by `Input` section variables
 
 All recipes must include these arguments in the `Input` section:
 - `NAME`: Software display name (consistent with parent recipe)
-- `SELF_SERVICE` must be set to `true`
-- `AUTOMATIC_INSTALL` must be set to `false`
-- `CATEGORIES`: At least one category (required when `SELF_SERVICE: true`)
-- `GITOPS_MODE`: Set to `false` by default (users can override to enable GitOps)
+- `self_service` must be set to `true`
+- `automatic_install` must be set to `false`
+- `categories`: At least one category (required when `self_service: true`)
+- `gitops_mode`: Set to `false` by default (users can override to enable GitOps)
 - GitOps-specific paths:
   - `FLEET_GITOPS_SOFTWARE_DIR` must be set to `lib/macos/software`
   - `FLEET_GITOPS_TEAM_YAML_PATH` must be set to `teams/workstations.yml`

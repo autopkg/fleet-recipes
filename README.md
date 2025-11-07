@@ -20,8 +20,9 @@ Mode is controlled by the `GITOPS_MODE` input variable (default: `false`). Users
 - **Python 3.9+**: Required by FleetImporter processor
 - **AutoPkg 2.3+**: Required for recipe execution
 - **boto3 1.18.0+**: Required for GitOps mode S3 operations
-  - Automatically installed when needed if not present
-  - Uses only native Python libraries for direct mode
+  - Processor attempts automatic installation at import time if not present
+  - If auto-installation fails, GitOps mode will not be available
+  - Direct mode uses only native Python libraries (no external dependencies)
 
 ---
 
@@ -61,10 +62,10 @@ Process:
 |----------|------|---------|-------------|
 | `self_service` | boolean | `true` | Show in Fleet Desktop |
 | `automatic_install` | boolean | `false` | Auto-install on matching devices |
-| `categories` | array | `[]` | Categories (Browsers, Communication, Developer tools, Productivity) |
+| `categories` | array | `[]` | Categories for self-service software (required when `self_service` is `true`). Valid values: Browsers, Communication, Developer tools, Productivity |
 | `labels_include_any` | array | `[]` | Only install on devices with these labels |
 | `labels_exclude_any` | array | `[]` | Exclude devices with these labels |
-| `icon` | string | - | Path to PNG icon (square, 120-1024px, max 100KB). If not provided, automatically extracts from app bundle. |
+| `icon` | string | - | Path to PNG icon (square, 120-1024px, max 100KB). Paths are resolved relative to the recipe directory. If not provided, automatically extracts from app bundle. |
 | `install_script` | string | - | Custom installation script |
 | `uninstall_script` | string | - | Custom uninstall script |
 | `pre_install_query` | string | - | osquery to run before install |
@@ -131,7 +132,7 @@ Process:
     gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
     gitops_team_yaml_path: "%FLEET_GITOPS_TEAM_YAML_PATH%"
     github_token: "%FLEET_GITOPS_GITHUB_TOKEN%"
-  Processor: com.github.kitzy.FleetImporter/FleetImporter
+  Processor: com.github.fleet.FleetImporter/FleetImporter
 ```
 
 ### Optional recipe arguments
