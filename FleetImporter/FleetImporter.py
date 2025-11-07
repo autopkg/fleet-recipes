@@ -441,6 +441,57 @@ class FleetImporter(Processor):
                 f"Failed to connect to Fleet API for policy creation: {e}"
             )
 
+    def _create_or_update_policy_gitops(
+        self,
+        repo_dir: str,
+        software_title: str,
+        version: str,
+        hash_sha256: str,
+    ):
+        """Create or update auto-update policy in GitOps repository.
+        
+        Args:
+            repo_dir: Path to Git repository
+            software_title: Software title
+            version: Software version
+            hash_sha256: SHA256 hash of package for linking
+        """
+        # Build policy name
+        policy_name = self._format_policy_name(software_title)
+        self.output(f"Auto-update policy name: {policy_name}")
+        
+        # Build version detection query
+        query = self._build_version_query(software_title, version)
+        self.output(f"Auto-update policy query: {query}")
+        
+        # Create policy YAML structure
+        policy_yaml = {
+            "name": policy_name,
+            "query": query,
+            "description": f"Auto-update policy for {software_title}. Managed by AutoPkg.",
+            "resolution": f"This device will automatically install {software_title} {version}",
+            "platform": "darwin",
+            "critical": False,
+            "install_software": {
+                "hash_sha256": hash_sha256
+            }
+        }
+        
+        # Create lib/policies directory if it doesn't exist
+        policies_dir = Path(repo_dir) / "lib" / "policies"
+        policies_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Write policy file
+        slug = self._slugify(software_title)
+        policy_filename = f"{slug}.yml"
+        policy_path = policies_dir / policy_filename
+        
+        self.output(f"Writing auto-update policy to: lib/policies/{policy_filename}")
+        self._write_yaml(policy_path, policy_yaml)
+        
+        # Return relative path for Git operations
+        return f"lib/policies/{policy_filename}"
+
     def main(self):
         # Check if GitOps mode is enabled
         gitops_mode = bool(self.env.get("gitops_mode", False))
@@ -642,6 +693,31 @@ class FleetImporter(Processor):
                     "Could not extract icon from package. Skipping icon upload."
                 )
 
+        # Create auto-update policy if enabled
+        auto_update_enabled = bool(self.env.get("auto_update_enabled", False))
+        if auto_update_enabled and hash_sha256:
+            self.output("Auto-update policy enabled - creating/updating policy...")
+            try:
+                self._create_or_update_policy_direct(
+                    fleet_api_base,
+                    fleet_token,
+                    team_id,
+                    software_title,
+                    version,
+                    hash_sha256,
+                )
+            except Exception as e:
+                # Log warning but don't fail the entire workflow
+                self.output(
+                    f"Warning: Failed to create auto-update policy: {e}. "
+                    "Package upload succeeded, but policy creation failed."
+                )
+        elif auto_update_enabled and not hash_sha256:
+            self.output(
+                "Warning: Auto-update policy enabled but no hash available. "
+                "Skipping policy creation."
+            )
+
     def _run_gitops_workflow(self):
         """Run the GitOps workflow: upload to S3, update YAML, create PR."""
         # Validate inputs
@@ -805,6 +881,30 @@ class FleetImporter(Processor):
                 categories,
             )
 
+            # Create auto-update policy if enabled
+            policy_yaml_path = None
+            auto_update_enabled = bool(self.env.get("auto_update_enabled", False))
+            if auto_update_enabled and hash_sha256:
+                self.output("Auto-update policy enabled - creating policy YAML...")
+                try:
+                    policy_yaml_path = self._create_or_update_policy_gitops(
+                        temp_dir,
+                        software_title,
+                        version,
+                        hash_sha256,
+                    )
+                except Exception as e:
+                    # Log warning but don't fail the entire workflow
+                    self.output(
+                        f"Warning: Failed to create auto-update policy YAML: {e}. "
+                        "Package upload succeeded, but policy creation failed."
+                    )
+            elif auto_update_enabled and not hash_sha256:
+                self.output(
+                    "Warning: Auto-update policy enabled but no hash available. "
+                    "Skipping policy creation."
+                )
+
             # Create Git branch, commit, and push
             branch_name = f"autopkg/{self._slugify(software_title)}-{version}"
             self.output(f"Creating Git branch: {branch_name}")
@@ -816,6 +916,7 @@ class FleetImporter(Processor):
                 package_yaml_path,
                 team_yaml_path,
                 icon_relative_path,
+                policy_yaml_path,
             )
             self.env["git_branch"] = branch_name
 
@@ -1628,6 +1729,7 @@ class FleetImporter(Processor):
         package_yaml_path: str,
         team_yaml_path: str,
         icon_path: str = None,
+        policy_yaml_path: str = None,
     ):
         """Create Git branch, commit changes, and push to remote.
 
@@ -1639,6 +1741,7 @@ class FleetImporter(Processor):
             package_yaml_path: Relative path to package YAML file
             team_yaml_path: Relative path to team YAML file
             icon_path: Optional relative path to icon file (e.g., ../../icons/claude.png)
+            policy_yaml_path: Optional relative path to policy YAML file (e.g., lib/policies/chrome.yml)
 
         Raises:
             ProcessorError: If Git operations fail
@@ -1670,6 +1773,11 @@ class FleetImporter(Processor):
                 # icon_path is like ../../icons/claude.png, need to convert to lib/icons/claude.png
                 icon_file = icon_path.replace("../../", "lib/")
                 files_to_add.append(icon_file)
+            
+            # Add policy file if provided
+            if policy_yaml_path:
+                # policy_yaml_path is already relative to repo root (e.g., lib/policies/chrome.yml)
+                files_to_add.append(policy_yaml_path)
 
             subprocess.run(
                 ["git", "add"] + files_to_add,
