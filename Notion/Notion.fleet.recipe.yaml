@@ -5,9 +5,9 @@ ParentRecipe: com.github.swy.pkg.Notion
 
 Input:
   NAME: Notion
-  SELF_SERVICE: true
-  AUTOMATIC_INSTALL: false
-  CATEGORIES:
+  self_service: true
+  automatic_install: false
+  categories:
   - Productivity
   
   # Optional: Icon file (leave empty for automatic extraction)
@@ -21,16 +21,16 @@ Input:
 
   # Optional: Label targeting (leave empty to target all hosts)
   # NOTE: Only one of these can be used at a time
-  LABELS_INCLUDE_ANY: []
-  LABELS_EXCLUDE_ANY: []
+  labels_include_any: []
+  labels_exclude_any: []
 
   # Mode selector
-  GITOPS_MODE: false
+  gitops_mode: false
 
   # GitOps-specific options
   FLEET_GITOPS_SOFTWARE_DIR: lib/macos/software
   FLEET_GITOPS_TEAM_YAML_PATH: teams/workstations.yml
-  S3_RETENTION_VERSIONS: 0
+  s3_retention_versions: 0
 
 Process:
 - Arguments:
@@ -38,11 +38,6 @@ Process:
     pkg_path: "%pkg_path%"
     software_title: "%NAME%"
     version: "%version%"
-
-    # Fleet deployment settings
-    self_service: "%SELF_SERVICE%"
-    automatic_install: "%AUTOMATIC_INSTALL%"
-    categories: "%CATEGORIES%"
 
     # Optional: Icon settings
     icon: "%ICON%"
@@ -53,17 +48,9 @@ Process:
     pre_install_query: "%PRE_INSTALL_QUERY%"
     post_install_script: "%POST_INSTALL_SCRIPT%"
 
-    # Optional: Label targeting
-    labels_include_any: "%LABELS_INCLUDE_ANY%"
-    labels_exclude_any: "%LABELS_EXCLUDE_ANY%"
-
-    # Mode selector
-    gitops_mode: "%GITOPS_MODE%"
-
     # GitOps-specific options
     gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
     gitops_team_yaml_path: "%FLEET_GITOPS_TEAM_YAML_PATH%"
-    s3_retention_versions: "%S3_RETENTION_VERSIONS%"
 
     # Direct mode arguments (read from AutoPkg preferences/env vars)
     fleet_api_base: "%FLEET_API_BASE%"
