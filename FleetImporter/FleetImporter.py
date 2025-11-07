@@ -211,6 +211,17 @@ class FleetImporter(Processor):
             "default": [],
             "description": "List of category names to group self-service software in Fleet Desktop (e.g., ['Productivity', 'Browser']).",
         },
+        # --- Auto-update policy options ---
+        "auto_update_enabled": {
+            "required": False,
+            "default": False,
+            "description": "Enable auto-update policy creation. Creates a Fleet policy that automatically installs software on devices with outdated versions.",
+        },
+        "auto_update_policy_name": {
+            "required": False,
+            "default": "autopkg-auto-update-%NAME%",
+            "description": "Template for auto-update policy name. Use %NAME% as placeholder for software title (default: autopkg-auto-update-%NAME%).",
+        },
     }
 
     output_variables = {
@@ -233,6 +244,202 @@ class FleetImporter(Processor):
     def _get_ssl_context(self):
         """Create an SSL context using certifi's CA bundle."""
         return ssl.create_default_context(cafile=certifi.where())
+
+    def _build_version_query(self, software_title: str, version: str) -> str:
+        """Build osquery query to detect outdated software versions.
+        
+        Uses the 'programs' table which contains:
+        - name (TEXT): Package display name
+        - version (TEXT): Package-supplied version
+        
+        Args:
+            software_title: Software title to query
+            version: Current version to check against
+            
+        Returns:
+            osquery SQL query string
+        """
+        # Sanitize inputs for SQL query (escape single quotes)
+        safe_name = software_title.replace("'", "''")
+        safe_version = version.replace("'", "''")
+        
+        # Build query targeting outdated versions
+        query = (
+            f"SELECT * FROM programs "
+            f"WHERE name = '{safe_name}' "
+            f"AND version != '{safe_version}'"
+        )
+        
+        return query
+    
+    def _format_policy_name(self, software_title: str, template: str = None) -> str:
+        """Format policy name from template.
+        
+        Args:
+            software_title: Software title to use in policy name
+            template: Optional template string with %NAME% placeholder
+            
+        Returns:
+            Formatted policy name
+        """
+        if template is None:
+            template = self.env.get("auto_update_policy_name", "autopkg-auto-update-%NAME%")
+        
+        # Create slug from software title (lowercase, hyphens only)
+        slug = self._slugify(software_title)
+        
+        # Replace %NAME% placeholder with slug
+        policy_name = template.replace("%NAME%", slug)
+        
+        return policy_name
+
+    def _find_existing_policy(
+        self, fleet_api_base: str, fleet_token: str, team_id: int, policy_name: str
+    ) -> dict | None:
+        """Find existing policy by name.
+        
+        Args:
+            fleet_api_base: Fleet base URL
+            fleet_token: Fleet API token
+            team_id: Team ID (0 for global)
+            policy_name: Policy name to search for
+            
+        Returns:
+            Policy dict if found, None otherwise
+        """
+        try:
+            # Determine endpoint based on team_id
+            if team_id == 0:
+                endpoint = f"{fleet_api_base}/api/v1/fleet/global/policies"
+            else:
+                endpoint = f"{fleet_api_base}/api/v1/fleet/teams/{team_id}/policies"
+            
+            headers = {
+                "Authorization": f"Bearer {fleet_token}",
+                "Accept": "application/json",
+            }
+            req = urllib.request.Request(endpoint, headers=headers)
+            
+            with urllib.request.urlopen(
+                req, timeout=FLEET_VERSION_TIMEOUT, context=self._get_ssl_context()
+            ) as resp:
+                if resp.getcode() == 200:
+                    data = json.loads(resp.read().decode())
+                    policies = data.get("policies", [])
+                    
+                    # Search for policy by name
+                    for policy in policies:
+                        if policy.get("name") == policy_name:
+                            return policy
+        except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError) as e:
+            self.output(f"Warning: Could not query policies: {e}")
+        
+        return None
+    
+    def _create_or_update_policy_direct(
+        self,
+        fleet_api_base: str,
+        fleet_token: str,
+        team_id: int,
+        software_title: str,
+        version: str,
+        hash_sha256: str,
+    ):
+        """Create or update auto-update policy via Fleet API.
+        
+        Args:
+            fleet_api_base: Fleet base URL
+            fleet_token: Fleet API token
+            team_id: Team ID (0 for global)
+            software_title: Software title
+            version: Software version
+            hash_sha256: SHA256 hash of package for linking
+        """
+        # Build policy name
+        policy_name = self._format_policy_name(software_title)
+        self.output(f"Auto-update policy name: {policy_name}")
+        
+        # Build version detection query
+        query = self._build_version_query(software_title, version)
+        self.output(f"Auto-update policy query: {query}")
+        
+        # Check if policy already exists
+        existing_policy = self._find_existing_policy(
+            fleet_api_base, fleet_token, team_id, policy_name
+        )
+        
+        # Prepare policy payload
+        payload = {
+            "name": policy_name,
+            "query": query,
+            "description": f"Auto-update policy for {software_title}. Managed by AutoPkg.",
+            "resolution": f"This device will automatically install {software_title} {version}",
+            "platform": "darwin",
+            "critical": False,
+            "install_software": {
+                "hash_sha256": hash_sha256
+            }
+        }
+        
+        # Determine endpoint based on team_id
+        if team_id == 0:
+            base_endpoint = f"{fleet_api_base}/api/v1/fleet/global/policies"
+        else:
+            base_endpoint = f"{fleet_api_base}/api/v1/fleet/teams/{team_id}/policies"
+        
+        headers = {
+            "Authorization": f"Bearer {fleet_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        
+        try:
+            if existing_policy:
+                # Update existing policy
+                policy_id = existing_policy["id"]
+                endpoint = f"{base_endpoint}/{policy_id}"
+                self.output(f"Updating existing auto-update policy (ID: {policy_id})")
+                
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode(),
+                    headers=headers,
+                    method="PATCH",
+                )
+            else:
+                # Create new policy
+                endpoint = base_endpoint
+                self.output("Creating new auto-update policy")
+                
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode(),
+                    headers=headers,
+                    method="POST",
+                )
+            
+            with urllib.request.urlopen(
+                req, timeout=FLEET_VERSION_TIMEOUT, context=self._get_ssl_context()
+            ) as resp:
+                if resp.getcode() in (200, 201):
+                    response_data = json.loads(resp.read().decode())
+                    policy_id = response_data.get("policy", {}).get("id")
+                    self.output(
+                        f"Auto-update policy {'updated' if existing_policy else 'created'} successfully (ID: {policy_id})"
+                    )
+                else:
+                    raise ProcessorError(
+                        f"Failed to create/update policy: {resp.getcode()}"
+                    )
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode()
+            raise ProcessorError(
+                f"Failed to create/update auto-update policy: {e.code} {error_body}"
+            )
+        except urllib.error.URLError as e:
+            raise ProcessorError(
+                f"Failed to connect to Fleet API for policy creation: {e}"
+            )
 
     def main(self):
         # Check if GitOps mode is enabled
