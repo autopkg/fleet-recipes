@@ -887,7 +887,9 @@ class FleetImporter(Processor):
                         self.output(
                             "No .icns file found. Attempting to extract icon using macOS icon services..."
                         )
-                        temp_png = Path(tempfile.gettempdir()) / f"{app_bundle.stem}_icon.png"
+                        temp_png = (
+                            Path(tempfile.gettempdir()) / f"{app_bundle.stem}_icon.png"
+                        )
                         try:
                             # Use Python with Cocoa (PyObjC) to get the app's icon
                             # This is available in macOS's system Python
@@ -899,11 +901,15 @@ class FleetImporter(Processor):
                             if app_icon:
                                 # Get the largest representation (usually 512x512 or 1024x1024)
                                 tiff_data = app_icon.TIFFRepresentation()
-                                bitmap_rep = Cocoa.NSBitmapImageRep.imageRepWithData_(tiff_data)
+                                bitmap_rep = Cocoa.NSBitmapImageRep.imageRepWithData_(
+                                    tiff_data
+                                )
 
                                 # Convert to PNG
-                                png_data = bitmap_rep.representationUsingType_properties_(
-                                    Cocoa.NSBitmapImageFileTypePNG, None
+                                png_data = (
+                                    bitmap_rep.representationUsingType_properties_(
+                                        Cocoa.NSBitmapImageFileTypePNG, None
+                                    )
                                 )
 
                                 # Write PNG file
@@ -917,7 +923,9 @@ class FleetImporter(Processor):
                                 else:
                                     self.output("Warning: Icon file created but empty")
                             else:
-                                self.output("Warning: Could not get app icon from macOS")
+                                self.output(
+                                    "Warning: Could not get app icon from macOS"
+                                )
 
                         except ImportError:
                             self.output(
