@@ -184,12 +184,12 @@ class FleetImporter(Processor):
         "install_script": {
             "required": False,
             "default": "",
-            "description": "Custom install script body (string).",
+            "description": "Custom install script - either inline script body (string) or path to .sh file (relative to recipe dir or absolute).",
         },
         "uninstall_script": {
             "required": False,
             "default": "",
-            "description": "Custom uninstall script body (string).",
+            "description": "Custom uninstall script - either inline script body (string) or path to .sh file (relative to recipe dir or absolute).",
         },
         "icon": {
             "required": False,
@@ -204,7 +204,7 @@ class FleetImporter(Processor):
         "post_install_script": {
             "required": False,
             "default": "",
-            "description": "Post-install script body (string).",
+            "description": "Post-install script - either inline script body (string) or path to .sh file (relative to recipe dir or absolute).",
         },
         "categories": {
             "required": False,
@@ -279,10 +279,26 @@ class FleetImporter(Processor):
         labels_include_any = list(self.env.get("labels_include_any", []))
         labels_exclude_any = list(self.env.get("labels_exclude_any", []))
         categories = list(self.env.get("categories", []))
-        install_script = self.env.get("install_script", "")
-        uninstall_script = self.env.get("uninstall_script", "")
+        
+        # Read script files if paths are provided, otherwise use inline content
+        install_script_input = self.env.get("install_script", "")
+        uninstall_script_input = self.env.get("uninstall_script", "")
         pre_install_query = self.env.get("pre_install_query", "")
-        post_install_script = self.env.get("post_install_script", "")
+        post_install_script_input = self.env.get("post_install_script", "")
+        
+        # Check if inputs look like file paths (end with .sh or contain /) or inline scripts
+        # If they look like paths, read the file content
+        install_script = self._read_script_file(install_script_input) if (
+            install_script_input and (install_script_input.endswith('.sh') or '/' in install_script_input)
+        ) else install_script_input
+        
+        uninstall_script = self._read_script_file(uninstall_script_input) if (
+            uninstall_script_input and (uninstall_script_input.endswith('.sh') or '/' in uninstall_script_input)
+        ) else uninstall_script_input
+        
+        post_install_script = self._read_script_file(post_install_script_input) if (
+            post_install_script_input and (post_install_script_input.endswith('.sh') or '/' in post_install_script_input)
+        ) else post_install_script_input
 
         # Validate label targeting - only one of include/exclude allowed
         if labels_include_any and labels_exclude_any:
@@ -475,10 +491,27 @@ class FleetImporter(Processor):
         labels_include_any = list(self.env.get("labels_include_any", []))
         labels_exclude_any = list(self.env.get("labels_exclude_any", []))
         categories = list(self.env.get("categories", []))
-        install_script = self.env.get("install_script", "")
-        uninstall_script = self.env.get("uninstall_script", "")
+        
+        # Read script files if paths are provided, otherwise use inline content
+        install_script_input = self.env.get("install_script", "")
+        uninstall_script_input = self.env.get("uninstall_script", "")
         pre_install_query = self.env.get("pre_install_query", "")
-        post_install_script = self.env.get("post_install_script", "")
+        post_install_script_input = self.env.get("post_install_script", "")
+        
+        # Check if inputs look like file paths (end with .sh or contain /) or inline scripts
+        # If they look like paths, read the file content
+        install_script = self._read_script_file(install_script_input) if (
+            install_script_input and (install_script_input.endswith('.sh') or '/' in install_script_input)
+        ) else install_script_input
+        
+        uninstall_script = self._read_script_file(uninstall_script_input) if (
+            uninstall_script_input and (uninstall_script_input.endswith('.sh') or '/' in uninstall_script_input)
+        ) else uninstall_script_input
+        
+        post_install_script = self._read_script_file(post_install_script_input) if (
+            post_install_script_input and (post_install_script_input.endswith('.sh') or '/' in post_install_script_input)
+        ) else post_install_script_input
+        
         icon_path_str = self.env.get("icon", "").strip()
 
         # Validate label targeting - only one of include/exclude allowed
@@ -651,6 +684,51 @@ class FleetImporter(Processor):
         slug = re.sub(r"[^a-z0-9]+", "-", text.lower())
         # Remove leading/trailing hyphens
         return slug.strip("-")
+
+    def _read_script_file(self, script_path_str: str) -> str:
+        """Read script content from a file path.
+
+        Args:
+            script_path_str: Path to script file (relative or absolute)
+
+        Returns:
+            Script content as string, or empty string if file not found
+
+        Notes:
+            - If path is relative, resolves relative to recipe directory
+            - Returns empty string if file doesn't exist (with warning)
+        """
+        if not script_path_str:
+            return ""
+
+        script_path = Path(script_path_str)
+        
+        # Resolve relative paths relative to recipe directory
+        if not script_path.is_absolute():
+            recipe_dir = self.env.get("RECIPE_DIR")
+            if recipe_dir:
+                script_path = (Path(recipe_dir) / script_path_str).resolve()
+            else:
+                script_path = script_path.expanduser().resolve()
+        else:
+            script_path = script_path.expanduser().resolve()
+
+        if script_path.exists():
+            try:
+                with open(script_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self.output(f"Read script file: {script_path}")
+                return content
+            except Exception as e:
+                self.output(
+                    f"Warning: Could not read script file {script_path}: {e}. Using empty script."
+                )
+                return ""
+        else:
+            self.output(
+                f"Warning: Script file not found: {script_path}. Using empty script."
+            )
+            return ""
 
     def _extract_icon_from_pkg(self, pkg_path: Path) -> Path | None:
         """Extract and convert app icon from a package to PNG format.
