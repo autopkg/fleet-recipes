@@ -149,6 +149,76 @@ FleetImporter automatically extracts and uploads application icons from `.pkg` f
 
 ---
 
+## Custom scripts
+
+FleetImporter supports custom install, uninstall, and post-install scripts. Scripts can be provided as **inline content** or as **file paths**.
+
+### Inline scripts
+
+Provide the script content directly in the recipe:
+
+```yaml
+Input:
+  UNINSTALL_SCRIPT: |
+    #!/bin/bash
+    rm -rf "/Applications/MyApp.app"
+    rm -rf "$HOME/Library/Application Support/MyApp"
+```
+
+### Script files
+
+Reference a script file stored alongside the recipe:
+
+```yaml
+Input:
+  UNINSTALL_SCRIPT: uninstall-myapp.sh
+```
+
+FleetImporter automatically detects file paths (scripts ending in `.sh` or containing `/`) and reads the file content. Relative paths are resolved relative to the recipe directory.
+
+**Benefits of script files:**
+- Keeps recipes clean and readable
+- Makes scripts easier to maintain and test independently
+- Supports syntax highlighting in editors
+- Enables script reuse across multiple recipes
+
+### Using scripts with overrides
+
+When creating AutoPkg overrides with `autopkg make-override`, script file references continue to work because:
+
+1. **Script files stay with the original recipe** - The override only changes Input values, not companion files
+2. **Paths resolve to the original recipe directory** - AutoPkg's `RECIPE_DIR` always points to the original recipe location
+3. **You can override with custom scripts** by:
+   - Providing inline script content in your override
+   - Specifying an absolute path to your own script file
+   - Copying the script to your override directory and using a relative path
+
+**Example override customization:**
+
+```yaml
+Input:
+  # Option 1: Use inline script
+  UNINSTALL_SCRIPT: |
+    #!/bin/bash
+    echo "Custom uninstall logic"
+  
+  # Option 2: Use absolute path to custom script
+  UNINSTALL_SCRIPT: /path/to/my-custom-uninstall.sh
+  
+  # Option 3: Default - uses original recipe's script file
+  UNINSTALL_SCRIPT: uninstall-myapp.sh
+```
+
+### Supported script parameters
+
+All three script parameters support both inline and file path modes:
+
+- `install_script`: Custom installation script
+- `uninstall_script`: Custom uninstall script
+- `post_install_script`: Script to run after installation
+
+---
+
 ## Troubleshooting
 
 ### Common issues
