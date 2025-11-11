@@ -1729,7 +1729,13 @@ class FleetImporter(Processor):
             ProcessorError: If Git operations fail
         """
         try:
-            git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+            # Use explicit allowlist of environment variables for Git operations
+            # Only pass what Git actually needs, avoiding leakage of secrets
+            git_env = {
+                "GIT_TERMINAL_PROMPT": "0",
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": os.environ.get("HOME", ""),
+            }
 
             # Create and checkout new branch
             subprocess.run(
