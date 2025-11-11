@@ -272,7 +272,7 @@ python3 tests/test_style_guide_compliance.py
 ## Getting help
 
 - Ask questions in the [#autopkg channel](https://macadmins.slack.com/archives/C056155B4) on MacAdmins Slack
-- Open an [issue](https://github.com/autopkg/fleetimporter/issues) for bugs or feature requests
+- Open an [issue](https://github.com/autopkg/fleet-recipes/issues) for bugs or feature requests
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines
 
 ---
