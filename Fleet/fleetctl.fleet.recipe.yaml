@@ -1,0 +1,68 @@
+Description: "Builds fleetctl.pkg using the upstream recipe, then uploads to Fleet (direct mode) or S3+GitOps (GitOps mode)."
+Identifier: com.github.fleet.fleetctl
+MinimumVersion: "2.3"
+ParentRecipe: com.github.kitzy.pkg.fleetctl
+
+Input:
+  NAME: fleetctl
+  self_service: true
+  automatic_install: false
+  categories:
+  - Developer tools
+  
+  # Optional: Icon file (leave empty for automatic extraction)
+  ICON: Fleet.png
+
+  # Optional: Custom scripts and queries (leave empty if not needed)
+  INSTALL_SCRIPT: ""
+  UNINSTALL_SCRIPT: "rm -r /usr/local/bin/fleetctl"
+  PRE_INSTALL_QUERY: ""
+  POST_INSTALL_SCRIPT: ""
+
+  # Optional: Label targeting (leave empty to target all hosts)
+  # NOTE: Only one of these can be used at a time
+  labels_include_any: []
+  labels_exclude_any: []
+
+  # Mode selector
+  gitops_mode: false
+
+  # GitOps-specific options
+  FLEET_GITOPS_SOFTWARE_DIR: lib/macos/software
+  FLEET_GITOPS_TEAM_YAML_PATH: teams/workstations.yml
+  s3_retention_versions: 0
+
+Process:
+- Arguments:
+    # Core package info
+    pkg_path: "%pkg_path%"
+    software_title: "%NAME%"
+    version: "%version%"
+
+    # Optional: Icon settings
+    icon: "%ICON%"
+
+    # Optional: Custom scripts and queries
+    install_script: "%INSTALL_SCRIPT%"
+    uninstall_script: "%UNINSTALL_SCRIPT%"
+    pre_install_query: "%PRE_INSTALL_QUERY%"
+    post_install_script: "%POST_INSTALL_SCRIPT%"
+
+    # GitOps-specific options
+    gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
+    gitops_team_yaml_path: "%FLEET_GITOPS_TEAM_YAML_PATH%"
+
+    # Direct mode arguments (read from AutoPkg preferences/env vars)
+    fleet_api_base: "%FLEET_API_BASE%"
+    fleet_api_token: "%FLEET_API_TOKEN%"
+    team_id: "%FLEET_TEAM_ID%"
+
+    # GitOps mode arguments (read from AutoPkg preferences/env vars)
+    aws_s3_bucket: "%AWS_S3_BUCKET%"
+    aws_cloudfront_domain: "%AWS_CLOUDFRONT_DOMAIN%"
+    aws_access_key_id: "%AWS_ACCESS_KEY_ID%"
+    aws_secret_access_key: "%AWS_SECRET_ACCESS_KEY%"
+    aws_default_region: "%AWS_DEFAULT_REGION%"
+    gitops_repo_url: "%FLEET_GITOPS_REPO_URL%"
+    github_token: "%FLEET_GITOPS_GITHUB_TOKEN%"
+  Processor: com.github.fleet.FleetImporter/FleetImporter
