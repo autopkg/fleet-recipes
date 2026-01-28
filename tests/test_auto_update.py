@@ -370,7 +370,7 @@ class TestAutoUpdateTemplateMode(unittest.TestCase):
         """Test template for Windows registry-based detection."""
         template = """SELECT 1 WHERE EXISTS (
             SELECT 1 FROM registry
-            WHERE key = 'HKEY_LOCAL_MACHINE\\Software\\MyApp'
+            WHERE path = 'HKEY_LOCAL_MACHINE\\Software\\MyApp'
             AND name = 'Version'
             AND data >= '%VERSION%'
         )"""
