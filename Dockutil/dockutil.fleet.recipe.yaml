@@ -5,10 +5,11 @@ ParentRecipe: com.github.autopkg.jessepeterson.download.dockutil
 
 Input:
   NAME: dockutil
-  self_service: false
+  self_service: true
   automatic_install: false
   automatic_update: false
-  categories: []
+  categories:
+  - Developer tools
   
   # Optional: Icon file (leave empty for automatic extraction)
   ICON: ""
