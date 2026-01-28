@@ -201,7 +201,7 @@ class FleetImporter(Processor):
             "description": "Custom display name for the software in Fleet (e.g., 'CrowdStrike Falcon' instead of 'Falcon.app'). If not provided, Fleet will use the software_title.",
         },
         # --- Auto-update policy options ---
-        "auto_update_enabled": {
+        "automatic_update": {
             "required": False,
             "default": False,
             "description": "Enable auto-update policy creation. Creates a Fleet policy that automatically installs software on devices with outdated versions.",
@@ -272,14 +272,16 @@ class FleetImporter(Processor):
             # This is the legacy behavior for macOS apps
             safe_bundle_id = bundle_id.replace("'", "''")
 
-            # Build query using apps table and version_compare for semantic versioning
-            # Returns 1 (policy fails) if any host has outdated version
-            # version_compare returns: -1 if a < b, 0 if a == b, 1 if a > b
-            # We want to fail if version < required (version_compare(...) < 0)
+            # Build query using apps table for version checking
+            # Policy passes when no instances exist with incorrect version
+            # This means: app not installed OR all instances have correct version
+            # Policy fails when any instance has wrong version (needs update)
+            safe_bundle_id = bundle_id.replace("'", "''")
+
             query = (
-                f"SELECT 1 WHERE EXISTS (\n"
-                f"  SELECT 1 FROM apps WHERE bundle_identifier = '{safe_bundle_id}' "
-                f"AND version_compare(bundle_short_version, '{safe_version}') < 0\n"
+                f"SELECT 1 WHERE NOT EXISTS ("
+                f"SELECT 1 FROM apps WHERE bundle_identifier = '{safe_bundle_id}' "
+                f"AND bundle_short_version != '{safe_version}'"
                 f");"
             )
             return query
@@ -696,9 +698,31 @@ class FleetImporter(Processor):
                 f"Calculated SHA-256 hash from local file: {hash_sha256[:16]}..."
             )
             # Set output variables for existing package
-            self.env["fleet_title_id"] = None
+            title_id = existing_package.get("title_id")
+            self.env["fleet_title_id"] = title_id
             self.env["fleet_installer_id"] = None
             self.env["hash_sha256"] = hash_sha256
+
+            # Still create/update auto-update policy if enabled
+            automatic_update = bool(self.env.get("automatic_update", False))
+            if automatic_update and title_id:
+                self.output("Auto-update policy enabled - creating/updating policy...")
+                try:
+                    self._create_or_update_policy_direct(
+                        fleet_api_base,
+                        fleet_token,
+                        team_id,
+                        software_title,
+                        version,
+                        title_id,
+                        pkg_path,
+                    )
+                except Exception as e:
+                    # Log warning but don't fail the entire workflow
+                    self.output(
+                        f"Warning: Failed to create auto-update policy: {e}. "
+                        "Package already exists, but policy creation failed."
+                    )
             return
 
         # Upload to Fleet
@@ -811,8 +835,8 @@ class FleetImporter(Processor):
                 )
 
         # Create auto-update policy if enabled
-        auto_update_enabled = bool(self.env.get("auto_update_enabled", False))
-        if auto_update_enabled and title_id:
+        automatic_update = bool(self.env.get("automatic_update", False))
+        if automatic_update and title_id:
             self.output("Auto-update policy enabled - creating/updating policy...")
             try:
                 self._create_or_update_policy_direct(
@@ -830,7 +854,7 @@ class FleetImporter(Processor):
                     f"Warning: Failed to create auto-update policy: {e}. "
                     "Package upload succeeded, but policy creation failed."
                 )
-        elif auto_update_enabled and not title_id:
+        elif automatic_update and not title_id:
             self.output(
                 "Warning: Auto-update policy enabled but no software title ID available. "
                 "Skipping policy creation."
@@ -1062,8 +1086,8 @@ class FleetImporter(Processor):
 
             # Create auto-update policy if enabled
             policy_yaml_path = None
-            auto_update_enabled = bool(self.env.get("auto_update_enabled", False))
-            if auto_update_enabled:
+            automatic_update = bool(self.env.get("automatic_update", False))
+            if automatic_update:
                 self.output("Auto-update policy enabled - creating policy YAML...")
                 try:
                     policy_yaml_path = self._create_or_update_policy_gitops(
@@ -1623,17 +1647,17 @@ class FleetImporter(Processor):
         Returns:
             Bundle identifier string, or None if extraction fails
         """
+        temp_dir = None
         try:
             # Create temporary directory for extraction
             temp_dir = Path(tempfile.mkdtemp(prefix="fleetimporter-bundleid-"))
 
             # Expand the pkg to find the app bundle
             pkg_expand_dir = temp_dir / "pkg_contents"
-            pkg_expand_dir.mkdir()
 
             self.output(f"Extracting bundle ID from package: {pkg_path.name}")
             result = subprocess.run(
-                ["pkgutil", "--expand", str(pkg_path), str(pkg_expand_dir)],
+                ["pkgutil", "--expand-full", str(pkg_path), str(pkg_expand_dir)],
                 capture_output=True,
                 text=True,
             )
@@ -2628,6 +2652,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
                             if ver_string == version:
                                 # Hash is at the title level, not version level
                                 hash_sha256 = matching_title.get("hash_sha256")
+                                title_id = matching_title.get("id")
                                 self.output(
                                     f"Package {software_title} {version} already exists in Fleet (hash: {hash_sha256[:16] + '...' if hash_sha256 else 'none'})"
                                 )
@@ -2635,6 +2660,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
                                     "version": ver_string,
                                     "hash_sha256": hash_sha256,
                                     "package_name": software_title,
+                                    "title_id": title_id,
                                 }
 
                     # Check the currently available software_package as well
@@ -2643,6 +2669,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
                         pkg_version = sw_package.get("version", "")
                         if pkg_version == version:
                             hash_sha256 = matching_title.get("hash_sha256")
+                            title_id = matching_title.get("id")
                             self.output(
                                 f"Package {software_title} {version} already exists in Fleet as current package (hash: {hash_sha256[:16] + '...' if hash_sha256 else 'none'})"
                             )
@@ -2650,6 +2677,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
                                 "version": pkg_version,
                                 "hash_sha256": hash_sha256,
                                 "package_name": sw_package.get("name", software_title),
+                                "title_id": title_id,
                             }
 
                     # Version not found in this title
@@ -2764,8 +2792,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
 
         write_field("team_id", str(team_id))
         write_field("self_service", json.dumps(bool(self_service)).lower())
-        if display_name:
-            write_field("display_name", display_name)
+        write_field("display_name", display_name)
         if install_script:
             write_field("install_script", install_script)
         if uninstall_script:

@@ -7,6 +7,7 @@ Input:
   NAME: Zoom
   self_service: true
   automatic_install: false
+  automatic_update: false
   categories:
   - Communication
   
@@ -18,14 +19,12 @@ Input:
   UNINSTALL_SCRIPT: ""
   PRE_INSTALL_QUERY: ""
   POST_INSTALL_SCRIPT: ""
+  AUTOMATIC_UPDATE_POLICY_QUERY: ""
 
   # Optional: Label targeting (leave empty to target all hosts)
   # NOTE: Only one of these can be used at a time
   labels_include_any: []
   labels_exclude_any: []
-
-  # Optional: Auto-update policy automation
-  AUTO_UPDATE_ENABLED: false
 
   # Mode selector
   gitops_mode: false
@@ -51,9 +50,7 @@ Process:
     uninstall_script: "%UNINSTALL_SCRIPT%"
     pre_install_query: "%PRE_INSTALL_QUERY%"
     post_install_script: "%POST_INSTALL_SCRIPT%"
-
-    # Optional: Auto-update policy automation
-    auto_update_enabled: "%AUTO_UPDATE_ENABLED%"
+    auto_update_policy_query: "%AUTOMATIC_UPDATE_POLICY_QUERY%"
 
     # GitOps-specific options
     gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
