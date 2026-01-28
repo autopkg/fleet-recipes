@@ -26,11 +26,6 @@ Input:
 
   # Optional: Auto-update policy automation
   AUTO_UPDATE_ENABLED: false
-  AUTO_UPDATE_POLICY_NAME: "autopkg-auto-update-%NAME%"
-  AUTO_UPDATE_POLICY_QUERY: |
-    SELECT 1 WHERE EXISTS (
-      SELECT 1 FROM apps WHERE bundle_identifier = 'org.whispersystems.signal-desktop' AND version_compare(bundle_short_version, '%VERSION%') < 0
-    );
 
   # Mode selector
   gitops_mode: false
@@ -59,8 +54,6 @@ Process:
 
     # Optional: Auto-update policy automation
     auto_update_enabled: "%AUTO_UPDATE_ENABLED%"
-    auto_update_policy_name: "%AUTO_UPDATE_POLICY_NAME%"
-    auto_update_policy_query: "%AUTO_UPDATE_POLICY_QUERY%"
 
     # GitOps-specific options
     gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
