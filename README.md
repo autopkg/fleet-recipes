@@ -68,7 +68,8 @@ FleetImporter recipes support the following variables. Configuration can be set 
 | `pre_install_query` | Optional | Optional | - | osquery to run before install |
 | `post_install_script` | Optional | Optional | - | Script to run after install |
 | **Auto-Update Policies** | | | | |
-| `AUTO_UPDATE_ENABLED` | Optional | Optional | `false` | Create/update policies for automatic version detection and installation |
+| `automatic_update` | Optional | Optional | `false` | Create/update policies for automatic version detection and installation |
+| `auto_update_policy_query` | Optional | Optional | Auto-generated | Custom osquery for version detection (uses `%VERSION%` placeholder). Auto-generates from bundle ID if not provided |
 | `AUTO_UPDATE_POLICY_NAME` | Optional | Optional | `autopkg-auto-update-%NAME%` | Policy name template (%NAME% replaced with slugified software title) |
 | **GitOps-Specific Options** | | | | |
 | `s3_retention_versions` | Not used | Optional | `0` | Number of old package versions to retain in S3 (0 = no pruning) |
@@ -242,29 +243,29 @@ Auto-update policies are **disabled by default** for backward compatibility. Ena
 ```bash
 # Enable in a recipe override (per-recipe control)
 autopkg make-override VendorName/SoftwareName.fleet.recipe.yaml
-# Edit the override to set AUTO_UPDATE_ENABLED: true
+# Edit the override to set automatic_update: true
 autopkg run SoftwareName.fleet.recipe.yaml
 ```
 
 ### How it works
 
-When `AUTO_UPDATE_ENABLED` is set to `true`, FleetImporter:
+When `automatic_update` is set to `true`, FleetImporter:
 
 1. **Builds version query**: Creates an osquery SQL query to detect outdated versions using one of two modes:
 
    **Automatic Bundle ID Mode** (Recommended):
    If no custom query is provided, the processor automatically:
    - Extracts the bundle identifier from the `.pkg` file
-   - Generates a default query using the `apps` table and `version_compare()`
+   - Generates a default query using the `apps` table with `!=` comparison
    - Works for most standard macOS applications
    - Requires no manual configuration
 
    **Custom Query Mode** (Advanced use cases):
-   Define `AUTO_UPDATE_POLICY_QUERY` in your recipe with a `%VERSION%` placeholder:
+   Define `auto_update_policy_query` in your recipe with a `%VERSION%` placeholder:
    ```yaml
-   AUTO_UPDATE_POLICY_QUERY: |
-     SELECT 1 WHERE EXISTS (
-       SELECT 1 FROM apps WHERE bundle_identifier = 'com.github.GitHubClient' AND version_compare(bundle_short_version, '%VERSION%') < 0
+   auto_update_policy_query: |
+     SELECT 1 WHERE NOT EXISTS (
+       SELECT 1 FROM apps WHERE bundle_identifier = 'com.github.GitHubClient' AND bundle_short_version != '%VERSION%'
      );
    ```
    The `%VERSION%` placeholder is replaced with the actual version at runtime. Use custom queries for:
@@ -306,11 +307,11 @@ All bundle identifiers and versions are automatically escaped to prevent SQL inj
 ### Important considerations
 
 1. **Query modes**: 
-   - **Custom queries** (via `AUTO_UPDATE_POLICY_QUERY`) give full control and support any osquery table
+   - **Custom queries** (via `auto_update_policy_query`) give full control and support any osquery table
    - **Automatic mode** extracts CFBundleIdentifier from `.pkg` files and works for standard macOS apps
    - If automatic extraction fails and no custom query is provided, policy creation is skipped with a warning
 
-2. **Version comparison**: Uses osquery's `version_compare()` function for semantic version comparison. Policies fail when hosts have versions less than the required version (`version_compare(bundle_short_version, 'X.Y.Z') < 0`).
+2. **Version comparison**: Uses exact version matching with `!=` comparison. Policies pass when no apps exist with incorrect versions (app not installed OR all instances have correct version). Policies fail when any app instance has a version that doesn't match the required version.
 
 3. **Policy cleanup**: Policies are NOT automatically deleted when software is removed. You should manually delete outdated policies or implement cleanup automation.
 
