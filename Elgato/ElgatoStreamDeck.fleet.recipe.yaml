@@ -24,6 +24,9 @@ Input:
   labels_include_any: []
   labels_exclude_any: []
 
+  # Optional: Auto-update policy automation
+  AUTO_UPDATE_ENABLED: false
+
   # Mode selector
   gitops_mode: false
 

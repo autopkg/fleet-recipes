@@ -19,6 +19,9 @@ Input:
   labels_include_any: []
   labels_exclude_any: []
   
+  # Optional: Auto-update policy automation
+  AUTO_UPDATE_ENABLED: false
+
   gitops_mode: false
   FLEET_GITOPS_SOFTWARE_DIR: lib/macos/software
   FLEET_GITOPS_TEAM_YAML_PATH: teams/workstations.yml
