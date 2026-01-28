@@ -1,12 +1,13 @@
 Description: "Builds NorthPoleSec Santa.pkg using the upstream recipe, then uploads to Fleet (direct mode) or S3+GitOps (GitOps mode)."
 Identifier: com.github.fleet.NorthPoleSecSanta
 MinimumVersion: "2.3"
-ParentRecipe: com.github.davidbpirie.pkg.NorthPoleSecSanta
+ParentRecipe: com.github.autopkg.zentral.download.santa
 
 Input:
   NAME: Santa
   self_service: true
   automatic_install: false
+  automatic_update: false
   categories:
   - Productivity
   
@@ -18,6 +19,7 @@ Input:
   UNINSTALL_SCRIPT: ""
   PRE_INSTALL_QUERY: ""
   POST_INSTALL_SCRIPT: ""
+  AUTOMATIC_UPDATE_POLICY_QUERY: ""
 
   # Optional: Label targeting (leave empty to target all hosts)
   # NOTE: Only one of these can be used at a time
@@ -35,7 +37,7 @@ Input:
 Process:
 - Arguments:
     # Core package info
-    pkg_path: "%pkg_path%"
+    pkg_path: "%pathname%"
     software_title: "%NAME%"
     version: "%version%"
     display_name: "%NAME%"
@@ -48,6 +50,7 @@ Process:
     uninstall_script: "%UNINSTALL_SCRIPT%"
     pre_install_query: "%PRE_INSTALL_QUERY%"
     post_install_script: "%POST_INSTALL_SCRIPT%"
+    auto_update_policy_query: "%AUTOMATIC_UPDATE_POLICY_QUERY%"
 
     # GitOps-specific options
     gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"

@@ -7,6 +7,7 @@ Input:
   NAME: Munki Tools
   self_service: true
   automatic_install: false
+  automatic_update: false
   categories:
     - Developer tools
   
@@ -18,6 +19,7 @@ Input:
   UNINSTALL_SCRIPT: ""
   PRE_INSTALL_QUERY: ""
   POST_INSTALL_SCRIPT: ""
+  AUTOMATIC_UPDATE_POLICY_QUERY: ""
 
   # Optional: Label targeting (leave empty to target all hosts)
   # NOTE: Only one of these can be used at a time
@@ -47,6 +49,7 @@ Process:
     uninstall_script: "%UNINSTALL_SCRIPT%"
     pre_install_query: "%PRE_INSTALL_QUERY%"
     post_install_script: "%POST_INSTALL_SCRIPT%"
+    auto_update_policy_query: "%AUTOMATIC_UPDATE_POLICY_QUERY%"
 
     # GitOps-specific options
     gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"

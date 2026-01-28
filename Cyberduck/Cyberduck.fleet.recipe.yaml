@@ -7,6 +7,7 @@ Input:
   NAME: Cyberduck
   self_service: true
   automatic_install: false
+  automatic_update: false
   categories:
   - Productivity
   
@@ -15,6 +16,7 @@ Input:
   UNINSTALL_SCRIPT: ""
   PRE_INSTALL_QUERY: ""
   POST_INSTALL_SCRIPT: ""
+  AUTOMATIC_UPDATE_POLICY_QUERY: ""
   
   labels_include_any: []
   labels_exclude_any: []
@@ -35,6 +37,7 @@ Process:
     uninstall_script: "%UNINSTALL_SCRIPT%"
     pre_install_query: "%PRE_INSTALL_QUERY%"
     post_install_script: "%POST_INSTALL_SCRIPT%"
+    auto_update_policy_query: "%AUTOMATIC_UPDATE_POLICY_QUERY%"
     gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
     gitops_team_yaml_path: "%FLEET_GITOPS_TEAM_YAML_PATH%"
     fleet_api_base: "%FLEET_API_BASE%"

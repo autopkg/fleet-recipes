@@ -67,6 +67,9 @@ FleetImporter recipes support the following variables. Configuration can be set 
 | `uninstall_script` | Optional | Optional | - | Custom uninstall script |
 | `pre_install_query` | Optional | Optional | - | osquery to run before install |
 | `post_install_script` | Optional | Optional | - | Script to run after install |
+| **Auto-Update Policies** | | | | |
+| `AUTO_UPDATE_ENABLED` | Optional | Optional | `false` | Create/update policies for automatic version detection and installation |
+| `AUTO_UPDATE_POLICY_NAME` | Optional | Optional | `autopkg-auto-update-%NAME%` | Policy name template (%NAME% replaced with slugified software title) |
 | **GitOps-Specific Options** | | | | |
 | `s3_retention_versions` | Not used | Optional | `0` | Number of old package versions to retain in S3 (0 = no pruning) |
 
@@ -222,6 +225,102 @@ All three script parameters support both inline and file path modes:
 - `install_script`: Custom installation script
 - `uninstall_script`: Custom uninstall script
 - `post_install_script`: Script to run after installation
+
+---
+
+## Auto-update policy automation
+
+FleetImporter can automatically create Fleet policies that detect outdated software versions and trigger automatic updates via policy automation. When enabled, a policy is created for each software package that:
+
+1. **Detects outdated versions**: Uses osquery to find hosts running any version except the latest
+2. **Triggers installation**: Automatically installs the updated package when policy fails
+
+### Enabling auto-update policies
+
+Auto-update policies are **disabled by default** for backward compatibility. Enable them via recipe overrides:
+
+```bash
+# Enable in a recipe override (per-recipe control)
+autopkg make-override VendorName/SoftwareName.fleet.recipe.yaml
+# Edit the override to set AUTO_UPDATE_ENABLED: true
+autopkg run SoftwareName.fleet.recipe.yaml
+```
+
+### How it works
+
+When `AUTO_UPDATE_ENABLED` is set to `true`, FleetImporter:
+
+1. **Builds version query**: Creates an osquery SQL query to detect outdated versions using one of two modes:
+
+   **Automatic Bundle ID Mode** (Recommended):
+   If no custom query is provided, the processor automatically:
+   - Extracts the bundle identifier from the `.pkg` file
+   - Generates a default query using the `apps` table and `version_compare()`
+   - Works for most standard macOS applications
+   - Requires no manual configuration
+
+   **Custom Query Mode** (Advanced use cases):
+   Define `AUTO_UPDATE_POLICY_QUERY` in your recipe with a `%VERSION%` placeholder:
+   ```yaml
+   AUTO_UPDATE_POLICY_QUERY: |
+     SELECT 1 WHERE EXISTS (
+       SELECT 1 FROM apps WHERE bundle_identifier = 'com.github.GitHubClient' AND version_compare(bundle_short_version, '%VERSION%') < 0
+     );
+   ```
+   The `%VERSION%` placeholder is replaced with the actual version at runtime. Use custom queries for:
+   - Non-standard bundle ID detection
+   - Windows registry-based detection
+   - Linux package managers
+   - Custom osquery tables or complex version logic
+
+2. **Creates policy** (Direct mode): Uses Fleet API to create or update a policy with:
+   - Descriptive name (e.g., `autopkg-auto-update-github-desktop`)
+   - Version detection query (custom or auto-generated)
+   - Link to install package automatically on policy failure
+   - Platform targeting (macOS only)
+
+3. **Creates policy YAML** (GitOps mode): Writes policy definition to `lib/policies/` 
+
+### Policy naming
+
+Policy names are generated from the `AUTO_UPDATE_POLICY_NAME` template:
+
+- **Default template**: `autopkg-auto-update-%NAME%`
+- **%NAME% placeholder**: Replaced with slugified software title
+- **Slugification**: Converts to lowercase, removes special characters, replaces spaces with hyphens
+- **Customization**: Override `AUTO_UPDATE_POLICY_NAME` in your recipe to use a different naming pattern
+
+Examples:
+- `GitHub Desktop` → `autopkg-auto-update-github-desktop`
+- `Visual Studio Code` → `autopkg-auto-update-visual-studio-code`
+- `1Password 8` → `autopkg-auto-update-1password-8`
+
+### SQL injection prevention
+
+All bundle identifiers and versions are automatically escaped to prevent SQL injection:
+
+- Single quotes are doubled: `com.o'reilly.app` → `com.o''reilly.app`
+- Query remains safe even with malicious input
+- Tested against common injection patterns (OR clauses, UNION, DROP TABLE, etc.)
+
+### Important considerations
+
+1. **Query modes**: 
+   - **Custom queries** (via `AUTO_UPDATE_POLICY_QUERY`) give full control and support any osquery table
+   - **Automatic mode** extracts CFBundleIdentifier from `.pkg` files and works for standard macOS apps
+   - If automatic extraction fails and no custom query is provided, policy creation is skipped with a warning
+
+2. **Version comparison**: Uses osquery's `version_compare()` function for semantic version comparison. Policies fail when hosts have versions less than the required version (`version_compare(bundle_short_version, 'X.Y.Z') < 0`).
+
+3. **Policy cleanup**: Policies are NOT automatically deleted when software is removed. You should manually delete outdated policies or implement cleanup automation.
+
+4. **Error handling**: Policy creation failures are logged as warnings and don't block package uploads. Check AutoPkg output for any policy-related errors.
+
+5. **Team vs global policies**:
+   - Direct mode: Creates team-specific policies when `FLEET_TEAM_ID` > 0, global policies when `FLEET_TEAM_ID` = 0
+   - GitOps mode: Policy scope determined by GitOps repository structure
+
+6. **Idempotency**: Existing policies with the same name are updated (not duplicated) when recipes run again
 
 ---
 

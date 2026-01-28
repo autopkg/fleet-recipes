@@ -94,8 +94,69 @@ All recipes must include these arguments in the `Input` section:
 - GitOps-specific paths:
   - `FLEET_GITOPS_SOFTWARE_DIR` must be set to `lib/macos/software`
   - `FLEET_GITOPS_TEAM_YAML_PATH` must be set to `teams/workstations.yml`
+- Auto-update policy automation (optional feature):
+  - `AUTO_UPDATE_ENABLED`: Set to `false` by default (users can override to enable)
+  - `AUTO_UPDATE_POLICY_NAME`: Set to `autopkg-auto-update-%NAME%` template
 
 **Note:** Mode-specific credentials (API tokens, AWS keys, etc.) come from AutoPkg preferences or environment variables, NOT from the recipe Input section.
+
+### Auto-Update Policies
+
+As of the latest release, FleetImporter supports automatic creation of Fleet policies for version detection and automatic updates. This feature is:
+
+- **Optional**: Disabled by default (`AUTO_UPDATE_ENABLED: false`)
+- **User-controlled**: Users enable via recipe overrides or AutoPkg preferences
+- **Backward compatible**: Existing recipes work without changes
+
+#### Requirements for New Recipes
+
+All new recipes must include the auto-update inputs in the template format:
+
+```yaml
+Input:
+  NAME: Software Name
+  self_service: true
+  automatic_install: false
+  categories:
+  - Developer tools
+  
+  # Optional: Auto-update policy automation
+  AUTO_UPDATE_ENABLED: false
+  AUTO_UPDATE_POLICY_NAME: "autopkg-auto-update-%NAME%"
+  
+  gitops_mode: false
+```
+
+The inputs must also be passed to the FleetImporter processor arguments:
+
+```yaml
+Process:
+- Arguments:
+    # ... other arguments ...
+    
+    # Optional: Auto-update policy automation
+    auto_update_enabled: "%AUTO_UPDATE_ENABLED%"
+    auto_update_policy_name: "%AUTO_UPDATE_POLICY_NAME%"
+    
+  Processor: com.github.fleet.FleetImporter/FleetImporter
+```
+
+#### How Auto-Update Works
+
+When `AUTO_UPDATE_ENABLED` is set to `true`:
+
+1. **Version Detection**: Creates osquery SQL that detects hosts running outdated versions:
+   ```sql
+   SELECT * FROM programs WHERE name = 'Software Name' AND version != 'X.Y.Z'
+   ```
+
+2. **Policy Creation**:
+   - Direct mode: Uses Fleet API to create/update policy with automatic installation
+   - GitOps mode: Creates policy YAML file in `lib/policies/` directory
+
+3. **Automatic Installation**: Policy failure triggers self-service installation of the latest version
+
+See README.md for complete documentation on auto-update functionality.
 
 ### Categories
 

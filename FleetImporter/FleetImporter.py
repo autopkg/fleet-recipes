@@ -200,6 +200,22 @@ class FleetImporter(Processor):
             "default": "",
             "description": "Custom display name for the software in Fleet (e.g., 'CrowdStrike Falcon' instead of 'Falcon.app'). If not provided, Fleet will use the software_title.",
         },
+        # --- Auto-update policy options ---
+        "automatic_update": {
+            "required": False,
+            "default": False,
+            "description": "Enable auto-update policy creation. Creates a Fleet policy that automatically installs software on devices with outdated versions.",
+        },
+        "auto_update_policy_name": {
+            "required": False,
+            "default": "autopkg-auto-update-%NAME%",
+            "description": "Template for auto-update policy name. Use %NAME% as placeholder for software title (default: autopkg-auto-update-%NAME%).",
+        },
+        "auto_update_policy_query": {
+            "required": False,
+            "default": "",
+            "description": "Query template for auto-update policy. Use %VERSION% as placeholder for version number. If not specified, a default query using bundle_identifier will be generated (macOS apps only).",
+        },
     }
 
     output_variables = {
@@ -222,6 +238,327 @@ class FleetImporter(Processor):
     def _get_ssl_context(self):
         """Create an SSL context using certifi's CA bundle."""
         return ssl.create_default_context(cafile=certifi.where())
+
+    def _build_version_query(
+        self, version: str, query_template: str = None, bundle_id: str = None
+    ) -> str:
+        """Build osquery query to detect outdated software versions.
+
+        Supports two modes:
+        1. Template mode: Use provided query_template with %VERSION% placeholder
+        2. Default mode: Generate query using bundle_identifier and version_compare()
+
+        Args:
+            version: Current version to check against
+            query_template: Optional query template with %VERSION% placeholder
+            bundle_id: App bundle identifier (required for default mode)
+
+        Returns:
+            osquery SQL query string with version substituted
+
+        Raises:
+            ProcessorError: If template mode is used without query_template,
+                          or default mode is used without bundle_id
+        """
+        # Sanitize version for SQL (escape single quotes)
+        safe_version = version.replace("'", "''")
+
+        if query_template:
+            # Template mode: Replace %VERSION% placeholder with actual version
+            query = query_template.replace("%VERSION%", safe_version)
+            return query
+        elif bundle_id:
+            # Default mode: Generate query using apps table and version_compare
+            # This is the legacy behavior for macOS apps
+            safe_bundle_id = bundle_id.replace("'", "''")
+
+            # Build query using apps table for version checking
+            # Policy passes when no instances exist with incorrect version
+            # This means: app not installed OR all instances have correct version
+            # Policy fails when any instance has wrong version (needs update)
+            safe_bundle_id = bundle_id.replace("'", "''")
+
+            query = (
+                f"SELECT 1 WHERE NOT EXISTS ("
+                f"SELECT 1 FROM apps WHERE bundle_identifier = '{safe_bundle_id}' "
+                f"AND bundle_short_version != '{safe_version}'"
+                f");"
+            )
+            return query
+        else:
+            raise ProcessorError(
+                "Either query_template or bundle_id must be provided to build version query"
+            )
+
+    def _format_policy_name(self, software_title: str, template: str = None) -> str:
+        """Format policy name from template.
+
+        Args:
+            software_title: Software title to use in policy name
+            template: Optional template string with %NAME% placeholder
+
+        Returns:
+            Formatted policy name
+        """
+        if template is None:
+            template = self.env.get(
+                "auto_update_policy_name", "autopkg-auto-update-%NAME%"
+            )
+
+        # Create slug from software title (lowercase, hyphens only)
+        slug = self._slugify(software_title)
+
+        # Replace %NAME% placeholder with slug
+        policy_name = template.replace("%NAME%", slug)
+
+        return policy_name
+
+    def _find_existing_policy(
+        self, fleet_api_base: str, fleet_token: str, team_id: int, policy_name: str
+    ) -> dict | None:
+        """Find existing policy by name.
+
+        Args:
+            fleet_api_base: Fleet base URL
+            fleet_token: Fleet API token
+            team_id: Team ID (0 for global)
+            policy_name: Policy name to search for
+
+        Returns:
+            Policy dict if found, None otherwise
+        """
+        try:
+            # Determine endpoint based on team_id
+            if team_id == 0:
+                endpoint = f"{fleet_api_base}/api/v1/fleet/global/policies"
+            else:
+                endpoint = f"{fleet_api_base}/api/v1/fleet/teams/{team_id}/policies"
+
+            headers = {
+                "Authorization": f"Bearer {fleet_token}",
+                "Accept": "application/json",
+            }
+            req = urllib.request.Request(endpoint, headers=headers)
+
+            with urllib.request.urlopen(
+                req, timeout=FLEET_VERSION_TIMEOUT, context=self._get_ssl_context()
+            ) as resp:
+                if resp.getcode() == 200:
+                    data = json.loads(resp.read().decode())
+                    policies = data.get("policies", [])
+
+                    # Search for policy by name
+                    for policy in policies:
+                        if policy.get("name") == policy_name:
+                            return policy
+        except (
+            urllib.error.HTTPError,
+            urllib.error.URLError,
+            json.JSONDecodeError,
+        ) as e:
+            self.output(f"Warning: Could not query policies: {e}")
+
+        return None
+
+    def _create_or_update_policy_direct(
+        self,
+        fleet_api_base: str,
+        fleet_token: str,
+        team_id: int,
+        software_title: str,
+        version: str,
+        title_id: int,
+        pkg_path: str,
+    ):
+        """Create or update auto-update policy via Fleet API.
+
+        Args:
+            fleet_api_base: Fleet base URL
+            fleet_token: Fleet API token
+            team_id: Team ID (0 for global)
+            software_title: Software title
+            version: Software version
+            title_id: Software title ID for linking policy to package
+            pkg_path: Path to package file for bundle ID extraction
+        """
+        # Build policy name
+        policy_name = self._format_policy_name(software_title)
+        self.output(f"Auto-update policy name: {policy_name}")
+
+        # Build version detection query
+        query_template = self.env.get("auto_update_policy_query", "").strip()
+
+        if query_template:
+            # Use custom query template from recipe
+            self.output("Using custom query template from recipe")
+            query = self._build_version_query(version, query_template=query_template)
+        else:
+            # Fall back to default bundle_identifier-based query
+            self.output(
+                "No query template specified, using default bundle_identifier detection"
+            )
+            bundle_id = self._extract_bundle_id_from_pkg(Path(pkg_path))
+            if not bundle_id:
+                self.output(
+                    f"Warning: Could not extract bundle ID from package and no query template provided. "
+                    "Skipping auto-update policy creation."
+                )
+                return
+            query = self._build_version_query(version, bundle_id=bundle_id)
+
+        self.output(f"Auto-update policy query: {query}")
+
+        # Check if policy already exists
+        existing_policy = self._find_existing_policy(
+            fleet_api_base, fleet_token, team_id, policy_name
+        )
+
+        # Prepare policy payload
+        payload = {
+            "name": policy_name,
+            "query": query,
+            "description": f"Auto-update policy for {software_title}. Managed by AutoPkg.",
+            "resolution": f"This device will automatically install {software_title} {version}",
+            "platform": "darwin",
+            "critical": False,
+            "software_title_id": title_id,
+        }
+
+        # Determine endpoint based on team_id
+        if team_id == 0:
+            base_endpoint = f"{fleet_api_base}/api/v1/fleet/global/policies"
+        else:
+            base_endpoint = f"{fleet_api_base}/api/v1/fleet/teams/{team_id}/policies"
+
+        headers = {
+            "Authorization": f"Bearer {fleet_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        try:
+            if existing_policy:
+                # Update existing policy
+                policy_id = existing_policy["id"]
+                endpoint = f"{base_endpoint}/{policy_id}"
+                self.output(f"Updating existing auto-update policy (ID: {policy_id})")
+
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode(),
+                    headers=headers,
+                    method="PATCH",
+                )
+            else:
+                # Create new policy
+                endpoint = base_endpoint
+                self.output("Creating new auto-update policy")
+
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode(),
+                    headers=headers,
+                    method="POST",
+                )
+
+            with urllib.request.urlopen(
+                req, timeout=FLEET_VERSION_TIMEOUT, context=self._get_ssl_context()
+            ) as resp:
+                if resp.getcode() in (200, 201):
+                    response_data = json.loads(resp.read().decode())
+                    policy_id = response_data.get("policy", {}).get("id")
+                    self.output(
+                        f"Auto-update policy {'updated' if existing_policy else 'created'} successfully (ID: {policy_id})"
+                    )
+                else:
+                    raise ProcessorError(
+                        f"Failed to create/update policy: {resp.getcode()}"
+                    )
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode()
+            raise ProcessorError(
+                f"Failed to create/update auto-update policy: {e.code} {error_body}"
+            )
+        except urllib.error.URLError as e:
+            raise ProcessorError(
+                f"Failed to connect to Fleet API for policy creation: {e}"
+            )
+
+    def _create_or_update_policy_gitops(
+        self,
+        repo_dir: str,
+        software_title: str,
+        version: str,
+        pkg_path: str,
+    ):
+        """Create or update auto-update policy in GitOps repository.
+
+        Args:
+            repo_dir: Path to Git repository
+            software_title: Software title (used to reference the software package)
+            version: Software version
+            pkg_path: Path to package file for bundle ID extraction
+
+        Note:
+            In GitOps mode, the policy references software by name rather than ID.
+            Fleet will resolve the software_title to the appropriate software_title_id
+            when it processes the GitOps configuration.
+        """
+        # Build policy name
+        policy_name = self._format_policy_name(software_title)
+        self.output(f"Auto-update policy name: {policy_name}")
+
+        # Build version detection query
+        query_template = self.env.get("auto_update_policy_query", "").strip()
+
+        if query_template:
+            # Use custom query template from recipe
+            self.output("Using custom query template from recipe")
+            query = self._build_version_query(version, query_template=query_template)
+        else:
+            # Fall back to default bundle_identifier-based query
+            self.output(
+                "No query template specified, using default bundle_identifier detection"
+            )
+            bundle_id = self._extract_bundle_id_from_pkg(Path(pkg_path))
+            if not bundle_id:
+                self.output(
+                    f"Warning: Could not extract bundle ID from package and no query template provided. "
+                    "Skipping auto-update policy creation."
+                )
+                return None
+            query = self._build_version_query(version, bundle_id=bundle_id)
+
+        self.output(f"Auto-update policy query: {query}")
+
+        # Create policy YAML structure
+        # In GitOps mode, reference software by name - Fleet will resolve to software_title_id
+        policy_yaml = {
+            "name": policy_name,
+            "query": query,
+            "description": f"Auto-update policy for {software_title}. Managed by AutoPkg.",
+            "resolution": f"This device will automatically install {software_title} {version}",
+            "platform": "darwin",
+            "critical": False,
+            "install_software": {
+                "name": software_title,
+            },
+        }
+
+        # Create lib/policies directory if it doesn't exist
+        policies_dir = Path(repo_dir) / "lib" / "policies"
+        policies_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write policy file
+        slug = self._slugify(software_title)
+        policy_filename = f"{slug}.yml"
+        policy_path = policies_dir / policy_filename
+
+        self.output(f"Writing auto-update policy to: lib/policies/{policy_filename}")
+        self._write_yaml(policy_path, policy_yaml)
+
+        # Return relative path for Git operations
+        return f"lib/policies/{policy_filename}"
 
     def main(self):
         # Check if GitOps mode is enabled
@@ -361,9 +698,31 @@ class FleetImporter(Processor):
                 f"Calculated SHA-256 hash from local file: {hash_sha256[:16]}..."
             )
             # Set output variables for existing package
-            self.env["fleet_title_id"] = None
+            title_id = existing_package.get("title_id")
+            self.env["fleet_title_id"] = title_id
             self.env["fleet_installer_id"] = None
             self.env["hash_sha256"] = hash_sha256
+
+            # Still create/update auto-update policy if enabled
+            automatic_update = bool(self.env.get("automatic_update", False))
+            if automatic_update and title_id:
+                self.output("Auto-update policy enabled - creating/updating policy...")
+                try:
+                    self._create_or_update_policy_direct(
+                        fleet_api_base,
+                        fleet_token,
+                        team_id,
+                        software_title,
+                        version,
+                        title_id,
+                        pkg_path,
+                    )
+                except Exception as e:
+                    # Log warning but don't fail the entire workflow
+                    self.output(
+                        f"Warning: Failed to create auto-update policy: {e}. "
+                        "Package already exists, but policy creation failed."
+                    )
             return
 
         # Upload to Fleet
@@ -474,6 +833,32 @@ class FleetImporter(Processor):
                 self.output(
                     "Could not extract icon from package. Skipping icon upload."
                 )
+
+        # Create auto-update policy if enabled
+        automatic_update = bool(self.env.get("automatic_update", False))
+        if automatic_update and title_id:
+            self.output("Auto-update policy enabled - creating/updating policy...")
+            try:
+                self._create_or_update_policy_direct(
+                    fleet_api_base,
+                    fleet_token,
+                    team_id,
+                    software_title,
+                    version,
+                    title_id,
+                    pkg_path,
+                )
+            except Exception as e:
+                # Log warning but don't fail the entire workflow
+                self.output(
+                    f"Warning: Failed to create auto-update policy: {e}. "
+                    "Package upload succeeded, but policy creation failed."
+                )
+        elif automatic_update and not title_id:
+            self.output(
+                "Warning: Auto-update policy enabled but no software title ID available. "
+                "Skipping policy creation."
+            )
 
     def _run_gitops_workflow(self):
         """Run the GitOps workflow: upload to S3, update YAML, create PR."""
@@ -699,6 +1084,25 @@ class FleetImporter(Processor):
                 categories,
             )
 
+            # Create auto-update policy if enabled
+            policy_yaml_path = None
+            automatic_update = bool(self.env.get("automatic_update", False))
+            if automatic_update:
+                self.output("Auto-update policy enabled - creating policy YAML...")
+                try:
+                    policy_yaml_path = self._create_or_update_policy_gitops(
+                        temp_dir,
+                        software_title,
+                        version,
+                        pkg_path,
+                    )
+                except Exception as e:
+                    # Log warning but don't fail the entire workflow
+                    self.output(
+                        f"Warning: Failed to create auto-update policy YAML: {e}. "
+                        "Package upload succeeded, but policy creation failed."
+                    )
+
             # Create Git branch, commit, and push
             branch_name = f"autopkg/{self._slugify(software_title)}-{version}"
             self.output(f"Creating Git branch: {branch_name}")
@@ -710,6 +1114,7 @@ class FleetImporter(Processor):
                 package_yaml_path,
                 team_yaml_path,
                 icon_relative_path,
+                policy_yaml_path,
             )
             self.env["git_branch"] = branch_name
 
@@ -1231,6 +1636,90 @@ class FleetImporter(Processor):
 
         except Exception as e:
             self.output(f"Warning: Icon compression failed: {e}")
+            return None
+
+    def _extract_bundle_id_from_pkg(self, pkg_path: Path) -> str | None:
+        """Extract bundle identifier from a package file.
+
+        Args:
+            pkg_path: Path to .pkg file
+
+        Returns:
+            Bundle identifier string, or None if extraction fails
+        """
+        temp_dir = None
+        try:
+            # Create temporary directory for extraction
+            temp_dir = Path(tempfile.mkdtemp(prefix="fleetimporter-bundleid-"))
+
+            # Expand the pkg to find the app bundle
+            pkg_expand_dir = temp_dir / "pkg_contents"
+
+            self.output(f"Extracting bundle ID from package: {pkg_path.name}")
+            result = subprocess.run(
+                ["pkgutil", "--expand-full", str(pkg_path), str(pkg_expand_dir)],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode != 0:
+                self.output(
+                    f"Warning: Could not expand package for bundle ID extraction: {result.stderr}"
+                )
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None
+
+            # Find .app bundles within the expanded package
+            app_bundles = list(pkg_expand_dir.rglob("*.app"))
+            if not app_bundles:
+                self.output(
+                    "Warning: No .app bundle found in package for bundle ID extraction."
+                )
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None
+
+            # Use the first app bundle found
+            app_bundle = app_bundles[0]
+            info_plist = app_bundle / "Contents" / "Info.plist"
+
+            if not info_plist.exists():
+                self.output(f"Warning: Info.plist not found in {app_bundle.name}")
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None
+
+            # Extract CFBundleIdentifier using PlistBuddy
+            result = subprocess.run(
+                [
+                    "/usr/libexec/PlistBuddy",
+                    "-c",
+                    "Print :CFBundleIdentifier",
+                    str(info_plist),
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            # Clean up temp directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+            if result.returncode != 0:
+                self.output(
+                    f"Warning: Could not read CFBundleIdentifier from Info.plist: {result.stderr}"
+                )
+                return None
+
+            bundle_id = result.stdout.strip()
+            if not bundle_id:
+                self.output("Warning: CFBundleIdentifier is empty in Info.plist")
+                return None
+
+            self.output(f"Extracted bundle identifier: {bundle_id}")
+            return bundle_id
+
+        except Exception as e:
+            self.output(f"Warning: Bundle ID extraction failed with error: {e}")
+            if temp_dir and temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
             return None
 
     def _get_aws_credentials(self) -> tuple[str, str, str]:
@@ -1798,6 +2287,7 @@ class FleetImporter(Processor):
         package_yaml_path: str,
         team_yaml_path: str,
         icon_path: str = None,
+        policy_yaml_path: str = None,
     ):
         """Create Git branch, commit changes, and push to remote.
 
@@ -1809,6 +2299,7 @@ class FleetImporter(Processor):
             package_yaml_path: Relative path to package YAML file
             team_yaml_path: Relative path to team YAML file
             icon_path: Optional relative path to icon file (e.g., ../../icons/claude.png)
+            policy_yaml_path: Optional relative path to policy YAML file (e.g., lib/policies/chrome.yml)
 
         Raises:
             ProcessorError: If Git operations fail
@@ -1846,6 +2337,11 @@ class FleetImporter(Processor):
                 # icon_path is like ../../icons/claude.png, need to convert to lib/icons/claude.png
                 icon_file = icon_path.replace("../../", "lib/")
                 files_to_add.append(icon_file)
+
+            # Add policy file if provided
+            if policy_yaml_path:
+                # policy_yaml_path is already relative to repo root (e.g., lib/policies/chrome.yml)
+                files_to_add.append(policy_yaml_path)
 
             subprocess.run(
                 ["git", "add"] + files_to_add,
@@ -2156,6 +2652,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
                             if ver_string == version:
                                 # Hash is at the title level, not version level
                                 hash_sha256 = matching_title.get("hash_sha256")
+                                title_id = matching_title.get("id")
                                 self.output(
                                     f"Package {software_title} {version} already exists in Fleet (hash: {hash_sha256[:16] + '...' if hash_sha256 else 'none'})"
                                 )
@@ -2163,6 +2660,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
                                     "version": ver_string,
                                     "hash_sha256": hash_sha256,
                                     "package_name": software_title,
+                                    "title_id": title_id,
                                 }
 
                     # Check the currently available software_package as well
@@ -2171,6 +2669,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
                         pkg_version = sw_package.get("version", "")
                         if pkg_version == version:
                             hash_sha256 = matching_title.get("hash_sha256")
+                            title_id = matching_title.get("id")
                             self.output(
                                 f"Package {software_title} {version} already exists in Fleet as current package (hash: {hash_sha256[:16] + '...' if hash_sha256 else 'none'})"
                             )
@@ -2178,6 +2677,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
                                 "version": pkg_version,
                                 "hash_sha256": hash_sha256,
                                 "package_name": sw_package.get("name", software_title),
+                                "title_id": title_id,
                             }
 
                     # Version not found in this title
@@ -2292,8 +2792,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
 
         write_field("team_id", str(team_id))
         write_field("self_service", json.dumps(bool(self_service)).lower())
-        if display_name:
-            write_field("display_name", display_name)
+        write_field("display_name", display_name)
         if install_script:
             write_field("install_script", install_script)
         if uninstall_script:
