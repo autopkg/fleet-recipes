@@ -37,7 +37,7 @@ Input:
 Process:
 - Arguments:
     # Core package info
-    pkg_path: "%pkg_path%"
+    pkg_path: "%pathname%"
     software_title: "%NAME%"
     version: "%version%"
     display_name: "%NAME%"
