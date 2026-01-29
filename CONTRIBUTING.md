@@ -38,6 +38,7 @@ See the existing recipes in this repository for examples (Claude, Caffeine, GitH
 - Use automatic icon extraction (default behavior when `ICON: ""`)
 - Use consistent formatting with existing recipes
 - Reference an existing AutoPkg parent recipe that produces a `.pkg` file
+- **Update [PARENT_RECIPE_DEPENDENCIES.md](PARENT_RECIPE_DEPENDENCIES.md)** if your recipe introduces a new parent repository not already listed
 
 #### Recipe Structure
 

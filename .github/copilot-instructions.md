@@ -262,6 +262,10 @@ Process:
 - Set mode-specific defaults:
   - `GITOPS_MODE`: Set to `false` for direct mode by default
   - `FLEET_GITOPS_SOFTWARE_DIR` and `FLEET_GITOPS_TEAM_YAML_PATH`: Keep defaults unless you have specific requirements
+- **Update PARENT_RECIPE_DEPENDENCIES.md**: If the recipe uses a parent from a repository not already listed in PARENT_RECIPE_DEPENDENCIES.md, add it to the documentation
+  - Check the parent recipe's repository using `autopkg info <parent-recipe-id>`
+  - Trace the full dependency chain (pkg recipes often depend on download recipes from other repos)
+  - Add new repositories to both the "Quick Setup" section and the detailed repository list
 - Test with `autopkg run VendorName/SoftwareName.fleet.recipe.yaml -v`
 - All mode-specific credentials (API tokens, AWS keys, etc.) come from AutoPkg preferences or environment variables, NOT from the recipe Input section
 
