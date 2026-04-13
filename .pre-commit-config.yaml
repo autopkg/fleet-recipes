@@ -6,7 +6,7 @@ repos:
         args: ['--branch', 'main']
 
   - repo: https://github.com/homebysix/pre-commit-macadmin
-    rev: v1.23.0
+    rev: v1.24.1
     hooks:
       - id: check-autopkg-recipes
         args: ["--recipe-prefix=com.github.fleet.", "--strict", "--"]
