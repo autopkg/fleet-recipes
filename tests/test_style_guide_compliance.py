@@ -27,7 +27,23 @@ import glob
 import os
 import sys
 
-import yaml
+# PyYAML 6.0.3's libyaml C-extension segfaults at import time on Python 3.14
+# (alpha builds), which would otherwise abort this test with status 139 and no
+# output. Fail loudly with a fix hint instead. Re-evaluate once upstream PyYAML
+# ships a 3.14-compatible wheel; CI runs on 3.13, which is the supported version
+# for local development (see .python-version).
+if sys.version_info >= (3, 14):
+    sys.stderr.write(
+        "ERROR: Python {}.{} is not supported for this test suite.\n"
+        "PyYAML's libyaml C-extension currently segfaults on import under "
+        "Python 3.14+.\n"
+        "Please use Python 3.13 (see .python-version).\n".format(
+            sys.version_info.major, sys.version_info.minor
+        )
+    )
+    sys.exit(1)
+
+import yaml  # noqa: E402
 
 
 class StyleGuideValidator:

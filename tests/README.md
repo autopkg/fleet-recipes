@@ -38,6 +38,11 @@ The test suite validates both formats but will warn on legacy recipes, encouragi
 
 ### Prerequisites
 
+Use **Python 3.13** for local development. CI runs on 3.13, and the repo pins
+this via `.python-version` (honored by `pyenv`, `uv`, and similar tools).
+Python 3.14 (alpha) is not supported because PyYAML 6.0.3's libyaml C-extension
+segfaults at import time on that interpreter.
+
 ```bash
 python3 -m pip install PyYAML
 ```
