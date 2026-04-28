@@ -125,6 +125,11 @@ class FleetImporter(Processor):
             "required": False,
             "description": "GitHub personal access token for cloning and creating PRs (required for GitOps mode). Use FLEET_GITOPS_GITHUB_TOKEN environment variable.",
         },
+        "github_base_branch": {
+            "required": False,
+            "default": "",
+            "description": "Base branch for the GitOps PR. If empty (default), the repository's default branch is auto-detected via the GitHub API and falls back to 'main'.",
+        },
         "s3_retention_versions": {
             "required": False,
             "default": 0,
@@ -1050,24 +1055,41 @@ class FleetImporter(Processor):
                         "Could not extract icon from package. Skipping icon in GitOps."
                     )
 
+            # Calculate the local SHA-256 once, up front. We pass it to the
+            # S3 uploader so it gets stored as object metadata; future runs
+            # can then read the hash from a HEAD response instead of having
+            # to re-download the entire package.
+            self.output(f"Calculating SHA-256 hash from local file: {pkg_path.name}")
+            local_hash_sha256 = self._calculate_file_sha256(pkg_path)
+
             # Upload package to S3
             self.output(f"Uploading package to S3 bucket: {aws_s3_bucket}")
-            s3_key, package_was_uploaded = self._upload_to_s3(
-                aws_s3_bucket, software_title, version, pkg_path
+            s3_key, package_was_uploaded, s3_hash_sha256 = self._upload_to_s3(
+                aws_s3_bucket,
+                software_title,
+                version,
+                pkg_path,
+                local_sha256=local_hash_sha256,
             )
             self.output(f"Package in S3: {s3_key}")
 
-            # Calculate SHA-256 hash
-            # If package was uploaded, hash the local file
-            # If package already existed in S3, download and hash it to ensure accuracy
             if package_was_uploaded:
-                self.output(
-                    f"Calculating SHA-256 hash from local file: {pkg_path.name}"
-                )
-                hash_sha256 = self._calculate_file_sha256(pkg_path)
+                # We just wrote it; the local hash matches what's in S3.
+                hash_sha256 = local_hash_sha256
+            elif s3_hash_sha256:
+                # Existing object had sha256 stored as metadata at upload
+                # time — trust that over the local file in case the local
+                # build is non-deterministic but the S3 copy is what Fleet
+                # will download.
+                hash_sha256 = s3_hash_sha256
             else:
+                # Legacy object uploaded before metadata was stored. Fall
+                # back to downloading and hashing it so the YAML matches
+                # what Fleet will actually see.
                 self.output(
-                    "Package already exists in S3. Downloading to calculate accurate SHA-256 hash..."
+                    "Package already exists in S3 without sha256 metadata. "
+                    "Downloading once to calculate hash; future uploads will "
+                    "store the hash as metadata to avoid this."
                 )
                 hash_sha256 = self._calculate_s3_file_sha256(aws_s3_bucket, s3_key)
 
@@ -1787,7 +1809,7 @@ class FleetImporter(Processor):
         return access_key, secret_key, region
 
     def _get_s3_client(self):
-        """Get configured boto3 S3 client.
+        """Get configured boto3 S3 client, cached per processor instance.
 
         Returns:
             boto3 S3 client
@@ -1803,6 +1825,12 @@ class FleetImporter(Processor):
 
         access_key, secret_key, region = self._get_aws_credentials()
 
+        cached = getattr(self, "_cached_s3_client", None)
+        cached_key = getattr(self, "_cached_s3_client_key", None)
+        client_key = (access_key, region)
+        if cached is not None and cached_key == client_key:
+            return cached
+
         try:
             s3_client = boto3.client(
                 "s3",
@@ -1810,13 +1838,20 @@ class FleetImporter(Processor):
                 aws_secret_access_key=secret_key,
                 region_name=region,
             )
+            self._cached_s3_client = s3_client
+            self._cached_s3_client_key = client_key
             return s3_client
         except Exception as e:
             raise ProcessorError(f"Failed to create S3 client: {e}")
 
     def _upload_to_s3(
-        self, bucket: str, software_title: str, version: str, pkg_path: Path
-    ) -> tuple[str, bool]:
+        self,
+        bucket: str,
+        software_title: str,
+        version: str,
+        pkg_path: Path,
+        local_sha256: str | None = None,
+    ) -> tuple[str, bool, str | None]:
         """Upload package to S3 and return the S3 key.
 
         Args:
@@ -1824,11 +1859,17 @@ class FleetImporter(Processor):
             software_title: Software title for path construction
             version: Software version for path construction
             pkg_path: Path to the package file
+            local_sha256: Pre-computed SHA-256 of the local package, written
+                          to S3 object metadata so future runs can avoid
+                          re-downloading the package just to hash it.
 
         Returns:
-            Tuple of (S3 key, was_uploaded: bool)
+            Tuple of (S3 key, was_uploaded: bool, existing_sha256_or_none)
             - S3 key: path within bucket
             - was_uploaded: True if file was uploaded, False if it already existed
+            - existing_sha256_or_none: When the object already existed, the
+              sha256 read from S3 metadata if it was stored at upload time;
+              None if there is no stored metadata (legacy objects).
 
         Raises:
             ProcessorError: If upload fails
@@ -1856,27 +1897,36 @@ class FleetImporter(Processor):
                     )
                     # Continue to upload
                 else:
+                    existing_sha256 = (
+                        head_response.get("Metadata", {}).get("sha256") or None
+                    )
                     self.output(
                         f"Package {software_title} {version} already exists in S3 at {s3_key}. "
                         f"Skipping upload (size: {s3_size} bytes, ETag: {s3_etag})."
                     )
-                    return s3_key, False
+                    return s3_key, False, existing_sha256
             except ClientError as e:
                 if e.response["Error"]["Code"] == "404":
                     self.output("Package not found in S3, proceeding with upload")
                 else:
                     raise ProcessorError(f"S3 HEAD request failed: {e}")
 
-            # Upload file to S3
+            # Upload file to S3. Storing the SHA-256 in object metadata lets
+            # subsequent runs read it via HEAD instead of downloading the
+            # entire package.
+            extra_args: dict = {"ContentType": "application/octet-stream"}
+            if local_sha256:
+                extra_args["Metadata"] = {"sha256": local_sha256}
+
             self.output(f"Uploading to s3://{bucket}/{s3_key}")
             s3_client.upload_file(
                 str(pkg_path),
                 bucket,
                 s3_key,
-                ExtraArgs={"ContentType": "application/octet-stream"},
+                ExtraArgs=extra_args,
             )
             self.output(f"Upload complete: s3://{bucket}/{s3_key}")
-            return s3_key, True
+            return s3_key, True, local_sha256
 
         except NoCredentialsError:
             raise ProcessorError(
@@ -1896,9 +1946,44 @@ class FleetImporter(Processor):
 
         Returns:
             Full CloudFront HTTPS URL
+
+        Raises:
+            ProcessorError: If the domain is empty, contains an http:// scheme,
+                            or includes path/query components.
         """
-        # Remove any leading/trailing slashes from domain
-        domain = cloudfront_domain.strip("/")
+        if not cloudfront_domain or not cloudfront_domain.strip():
+            raise ProcessorError(
+                "aws_cloudfront_domain is empty. A CloudFront distribution "
+                "domain (e.g., d1234abcd.cloudfront.net or cdn.example.com) "
+                "is required for GitOps mode."
+            )
+
+        domain = cloudfront_domain.strip().strip("/")
+
+        # Reject explicit http:// — Fleet downloads must be HTTPS to avoid
+        # serving packages over an unauthenticated channel.
+        lower = domain.lower()
+        if lower.startswith("http://"):
+            raise ProcessorError(
+                f"aws_cloudfront_domain must be served over HTTPS, got: "
+                f"{cloudfront_domain!r}. Provide the domain only "
+                "(e.g., d1234abcd.cloudfront.net), not an http:// URL."
+            )
+        if lower.startswith("https://"):
+            domain = domain[8:]
+
+        # A bare domain has no path/query/fragment.
+        if any(ch in domain for ch in ("/", "?", "#")):
+            raise ProcessorError(
+                f"aws_cloudfront_domain must be a bare hostname (no path or "
+                f"query), got: {cloudfront_domain!r}."
+            )
+        if " " in domain or not domain:
+            raise ProcessorError(
+                f"aws_cloudfront_domain is not a valid hostname: "
+                f"{cloudfront_domain!r}."
+            )
+
         # Ensure s3_key doesn't start with /
         key = s3_key.lstrip("/")
         return f"https://{domain}/{key}"
@@ -1989,25 +2074,43 @@ class FleetImporter(Processor):
                 return
 
             # Delete old versions
+            failed_keys: list[tuple[str, str]] = []
             for ver in versions_to_delete:
                 for key in versions[ver]:
                     self.output(f"Deleting old version from S3: {key}")
                     try:
                         s3_client.delete_object(Bucket=bucket, Key=key)
                     except ClientError as e:
-                        self.output(f"Warning: Failed to delete {key}: {e}")
+                        failed_keys.append((key, str(e)))
+                        self.output(f"ERROR: S3 cleanup failed to delete {key}: {e}")
 
-            self.output(
-                f"Cleanup complete. Kept versions: {versions_to_keep}, "
-                f"Deleted versions: {versions_to_delete}"
-            )
+            if failed_keys:
+                # Surface a single, scannable summary so users see partial
+                # cleanup failures even if individual lines scroll past.
+                self.output(
+                    f"ERROR: S3 cleanup completed with {len(failed_keys)} "
+                    f"failure(s). Old object(s) still in bucket may incur "
+                    f"storage costs and should be investigated: "
+                    f"{[k for k, _ in failed_keys]}"
+                )
+            else:
+                self.output(
+                    f"Cleanup complete. Kept versions: {versions_to_keep}, "
+                    f"Deleted versions: {versions_to_delete}"
+                )
 
         except ClientError as e:
-            # Log error but don't fail the entire workflow
-            self.output(f"Warning: S3 cleanup failed: {e}")
+            # Log error but don't fail the entire workflow. Use ERROR prefix
+            # so accumulating cleanup failures aren't lost in normal warnings.
+            self.output(
+                f"ERROR: S3 cleanup failed for {software_title}: {e}. "
+                "Old package versions may not have been pruned."
+            )
         except Exception as e:
-            # Log error but don't fail the entire workflow
-            self.output(f"Warning: S3 cleanup failed: {e}")
+            self.output(
+                f"ERROR: S3 cleanup failed for {software_title}: {e}. "
+                "Old package versions may not have been pruned."
+            )
 
     def _copy_icon_to_gitops_repo(
         self, repo_dir: str, icon_path_str: str, software_title: str
@@ -2413,6 +2516,43 @@ class FleetImporter(Processor):
         except subprocess.CalledProcessError as e:
             raise ProcessorError(f"Git operation failed: {e.stderr or e.stdout}")
 
+    def _get_default_branch(self, owner: str, repo: str, github_token: str) -> str:
+        """Look up a repository's default branch via the GitHub API.
+
+        Falls back to "main" if the lookup fails for any reason — the original
+        hardcoded behavior — so this is strictly an improvement over the
+        previous hardcoded base.
+
+        Args:
+            owner: GitHub repo owner
+            repo: GitHub repo name
+            github_token: GitHub personal access token
+
+        Returns:
+            The default branch name, or "main" on any error.
+        """
+        api_url = f"https://api.github.com/repos/{owner}/{repo}"
+        headers = {
+            "Authorization": f"Bearer {github_token}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+        try:
+            req = urllib.request.Request(api_url, headers=headers, method="GET")
+            with urllib.request.urlopen(
+                req, timeout=30, context=self._get_ssl_context()
+            ) as resp:
+                if resp.getcode() == 200:
+                    body = json.loads(resp.read().decode())
+                    branch = body.get("default_branch")
+                    if branch:
+                        return branch
+        except Exception as e:
+            self.output(
+                f"Warning: Could not auto-detect default branch for "
+                f"{owner}/{repo} ({e}). Falling back to 'main'."
+            )
+        return "main"
+
     def _create_pull_request(
         self,
         repo_url: str,
@@ -2447,6 +2587,11 @@ class FleetImporter(Processor):
         owner = match.group(1)
         repo = match.group(2)
 
+        # Determine base branch: explicit override > auto-detected default > "main"
+        base_branch = (self.env.get("github_base_branch") or "").strip()
+        if not base_branch:
+            base_branch = self._get_default_branch(owner, repo, github_token)
+
         # Construct PR details
         pr_title = f"Add {software_title} {version}"
         pr_body = f"""
@@ -2476,7 +2621,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
             "title": pr_title,
             "body": pr_body,
             "head": branch_name,
-            "base": "main",  # TODO: Make this configurable
+            "base": base_branch,
         }
 
         try:
