@@ -53,7 +53,7 @@ FleetImporter recipes support the following variables. Configuration can be set 
 | `FLEET_TEAM_ID` | Required | Not used | - | Fleet team ID for software assignment |
 | **AWS S3 (GitOps Mode)** | | | | |
 | `AWS_S3_BUCKET` | Not used | Required | - | S3 bucket name for package storage |
-| `AWS_CLOUDFRONT_DOMAIN` | Not used | Required | - | CloudFront domain for package URLs |
+| `AWS_CLOUDFRONT_DOMAIN` | Not used | Required | - | CloudFront domain for package URLs. Must be a bare HTTPS hostname with no scheme, path, or query (e.g., `d1234abcd.cloudfront.net` or `cdn.example.com`) |
 | `AWS_ACCESS_KEY_ID` | Not used | Optional | - | AWS access key (can use `~/.aws/credentials` instead) |
 | `AWS_SECRET_ACCESS_KEY` | Not used | Optional | - | AWS secret key (can use `~/.aws/credentials` instead) |
 | `AWS_DEFAULT_REGION` | Not used | Required | `us-east-1` | AWS region for S3 operations |
