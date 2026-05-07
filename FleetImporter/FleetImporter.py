@@ -235,6 +235,37 @@ class FleetImporter(Processor):
         },
     }
 
+    # Matches AutoPkg's %KEY% substitution pattern.
+    _ENV_REF_RE = re.compile(r"%([^%]+)%")
+
+    def inject(self, arguments) -> None:
+        # AutoPkg's do_variable_substitution uses re.sub, which raises
+        # "TypeError: sequence item 0: expected str instance, int found" when a
+        # referenced env value is numeric. Defaults written as `-int` (e.g.
+        # FLEET_TEAM_ID) trip this. Coerce referenced numeric env entries to
+        # strings so substitution works regardless of how the user stored them.
+        for key in self._collect_referenced_keys(arguments):
+            value = self.env.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                self.env[key] = str(value)
+        super().inject(arguments)
+
+    @classmethod
+    def _collect_referenced_keys(cls, value) -> set[str]:
+        """Return the set of %KEY% names referenced anywhere in value."""
+        keys: set[str] = set()
+        if isinstance(value, str):
+            keys.update(cls._ENV_REF_RE.findall(value))
+        elif isinstance(value, dict):
+            for v in value.values():
+                keys.update(cls._collect_referenced_keys(v))
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                keys.update(cls._collect_referenced_keys(v))
+        return keys
+
     def _get_ssl_context(self):
         """Create an SSL context using certifi's CA bundle."""
         return ssl.create_default_context(cafile=certifi.where())
