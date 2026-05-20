@@ -1024,6 +1024,41 @@ class FleetImporter(Processor):
             temp_dir = self._clone_gitops_repo(gitops_repo_url, github_token)
             self.output(f"Repository cloned to: {temp_dir}")
 
+            # Idempotency gate (see #70): if the per-version branch was already
+            # pushed by a prior run, do not re-do the S3 upload + YAML edits +
+            # push (which would fail with a non-fast-forward error against the
+            # orphan branch). Mirror the "already exists in Fleet/S3" pattern.
+            branch_name = f"autopkg/{self._slugify(software_title)}-{version}"
+            if self._remote_branch_exists(temp_dir, branch_name):
+                self.output(
+                    f"Remote branch '{branch_name}' already exists — "
+                    f"{software_title} {version} was previously imported."
+                )
+                existing_pr_url = self._find_open_pr_for_branch(
+                    gitops_repo_url, github_token, branch_name
+                )
+                if existing_pr_url:
+                    self.output(
+                        f"Open pull request already exists: {existing_pr_url}. "
+                        "Skipping GitOps workflow."
+                    )
+                else:
+                    self.output(
+                        "Remote branch has no open pull request — opening one "
+                        "against the existing branch."
+                    )
+                    existing_pr_url = self._create_pull_request(
+                        gitops_repo_url,
+                        github_token,
+                        branch_name,
+                        software_title,
+                        version,
+                    )
+                    self.output(f"Pull request created: {existing_pr_url}")
+                self.env["git_branch"] = branch_name
+                self.env["pull_request_url"] = existing_pr_url
+                return
+
             # Handle icon - either from manual path or auto-extraction
             icon_relative_path = None
 
@@ -1142,7 +1177,6 @@ class FleetImporter(Processor):
                     )
 
             # Create Git branch, commit, and push
-            branch_name = f"autopkg/{self._slugify(software_title)}-{version}"
             self.output(f"Creating Git branch: {branch_name}")
             self._commit_and_push(
                 temp_dir,
@@ -2413,6 +2447,104 @@ class FleetImporter(Processor):
         except subprocess.CalledProcessError as e:
             raise ProcessorError(f"Git operation failed: {e.stderr or e.stdout}")
 
+    def _parse_github_repo_url(self, repo_url: str) -> tuple[str, str, str, str]:
+        """Parse a GitHub repo URL into (host, owner, repo, api_base).
+
+        Supports github.com and GitHub Enterprise hosts, both HTTPS and SSH
+        forms (e.g., https://github.example.com/owner/repo.git,
+        git@github.example.com:owner/repo.git).
+        """
+        match = re.search(
+            r"(?:https?://(?:[^@/]+@)?|git@)([\w.-]+)[:/]([^/]+)/([^/\.]+)",
+            repo_url,
+        )
+        if not match:
+            raise ProcessorError(
+                f"Could not parse GitHub repository from URL: {repo_url}"
+            )
+        host = match.group(1)
+        owner = match.group(2)
+        repo = match.group(3)
+        # GitHub Enterprise serves the REST API at /api/v3 on the same host,
+        # while github.com uses the separate api.github.com hostname.
+        api_base = (
+            "https://api.github.com"
+            if host == "github.com"
+            else f"https://{host}/api/v3"
+        )
+        return host, owner, repo, api_base
+
+    def _remote_branch_exists(self, repo_dir: str, branch_name: str) -> bool:
+        """Return True if ``branch_name`` exists on the ``origin`` remote.
+
+        Used to keep the GitOps workflow idempotent: re-running a recipe for
+        a version whose branch was already pushed must not blow up with a
+        non-fast-forward push (see #70).
+        """
+        git_env = {
+            "GIT_TERMINAL_PROMPT": "0",
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+        }
+        # `--exit-code` returns 2 when no refs match, 0 on match.
+        result = subprocess.run(
+            [
+                "git",
+                "ls-remote",
+                "--exit-code",
+                "origin",
+                f"refs/heads/{branch_name}",
+            ],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            env=git_env,
+        )
+        if result.returncode == 0:
+            return True
+        if result.returncode == 2:
+            return False
+        raise ProcessorError(
+            f"git ls-remote failed while probing for branch {branch_name}: "
+            f"{result.stderr or result.stdout}"
+        )
+
+    def _find_open_pr_for_branch(
+        self, repo_url: str, github_token: str, branch_name: str
+    ) -> str | None:
+        """Return the html_url of an open PR with head=branch_name, else None."""
+        _, owner, repo, api_base = self._parse_github_repo_url(repo_url)
+        query = urllib.parse.urlencode(
+            {"head": f"{owner}:{branch_name}", "state": "open"}
+        )
+        api_url = f"{api_base}/repos/{owner}/{repo}/pulls?{query}"
+        headers = {
+            "Authorization": f"Bearer {github_token}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+        try:
+            req = urllib.request.Request(api_url, headers=headers, method="GET")
+            with urllib.request.urlopen(
+                req, timeout=30, context=self._get_ssl_context()
+            ) as resp:
+                if resp.getcode() != 200:
+                    raise ProcessorError(
+                        "GitHub API returned unexpected status when listing "
+                        f"pull requests: {resp.getcode()}"
+                    )
+                prs = json.loads(resp.read().decode())
+                if prs:
+                    return prs[0].get("html_url")
+                return None
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode()
+            raise ProcessorError(
+                f"Failed to list pull requests for branch {branch_name}: "
+                f"{e.code} {error_body}"
+            )
+        except urllib.error.URLError as e:
+            raise ProcessorError(f"Failed to connect to GitHub API: {e}")
+
     def _create_pull_request(
         self,
         repo_url: str,
@@ -2436,28 +2568,7 @@ class FleetImporter(Processor):
         Raises:
             ProcessorError: If PR creation fails
         """
-        # Parse host, owner, and repo from URL. Supports github.com and GitHub
-        # Enterprise hosts, and both HTTPS and SSH forms (e.g.,
-        # https://github.example.com/owner/repo.git, git@github.example.com:owner/repo.git).
-        match = re.search(
-            r"(?:https?://(?:[^@/]+@)?|git@)([\w.-]+)[:/]([^/]+)/([^/\.]+)",
-            repo_url,
-        )
-        if not match:
-            raise ProcessorError(
-                f"Could not parse GitHub repository from URL: {repo_url}"
-            )
-
-        host = match.group(1)
-        owner = match.group(2)
-        repo = match.group(3)
-        # GitHub Enterprise serves the REST API at /api/v3 on the same host,
-        # while github.com uses the separate api.github.com hostname.
-        api_base = (
-            "https://api.github.com"
-            if host == "github.com"
-            else f"https://{host}/api/v3"
-        )
+        _, owner, repo, api_base = self._parse_github_repo_url(repo_url)
 
         # Construct PR details
         pr_title = f"Add {software_title} {version}"
