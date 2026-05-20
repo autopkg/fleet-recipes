@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -123,7 +124,19 @@ class FleetImporter(Processor):
         },
         "github_token": {
             "required": False,
-            "description": "GitHub personal access token for cloning and creating PRs (required for GitOps mode). Use FLEET_GITOPS_GITHUB_TOKEN environment variable.",
+            "description": "GitHub personal access token for cloning and creating PRs. Use FLEET_GITOPS_GITHUB_TOKEN environment variable. Either this OR the github_app_* inputs are required for GitOps mode; App credentials are preferred so PRs are authored by the App's bot identity rather than a human user.",
+        },
+        "github_app_id": {
+            "required": False,
+            "description": "GitHub App ID (numeric). When github_app_id, github_app_installation_id, and github_app_private_key_path are all set, a short-lived installation access token is minted and used in place of github_token. Use FLEET_GITOPS_GITHUB_APP_ID environment variable.",
+        },
+        "github_app_installation_id": {
+            "required": False,
+            "description": "GitHub App installation ID (numeric). Found at the URL of the App's installation on the org/repo. Use FLEET_GITOPS_GITHUB_APP_INSTALLATION_ID environment variable.",
+        },
+        "github_app_private_key_path": {
+            "required": False,
+            "description": "Filesystem path to the GitHub App's private key in PEM format (chmod 600). The key is never logged and is passed to openssl via -sign. Use FLEET_GITOPS_GITHUB_APP_PRIVATE_KEY_PATH environment variable.",
         },
         "s3_retention_versions": {
             "required": False,
@@ -929,7 +942,31 @@ class FleetImporter(Processor):
         gitops_software_dir = self.env.get("gitops_software_dir", "lib/macos/software")
         gitops_team_yaml_path = self.env.get("gitops_team_yaml_path")
         github_token = self.env.get("github_token")
+        github_app_id = self.env.get("github_app_id")
+        github_app_installation_id = self.env.get("github_app_installation_id")
+        github_app_private_key_path = self.env.get("github_app_private_key_path")
         s3_retention_versions = int(self.env.get("s3_retention_versions", 0))
+
+        have_app_creds = bool(
+            github_app_id and github_app_installation_id and github_app_private_key_path
+        )
+
+        # Warn if App config is partial — silent fallback to PAT is easy to miss.
+        _app_fields = (
+            ("github_app_id", github_app_id),
+            ("github_app_installation_id", github_app_installation_id),
+            ("github_app_private_key_path", github_app_private_key_path),
+        )
+        _set_app_fields = [n for n, v in _app_fields if v]
+        if 0 < len(_set_app_fields) < 3:
+            _missing_app_fields = [n for n, v in _app_fields if not v]
+            self.output(
+                "WARNING: Partial GitHub App configuration detected — "
+                f"set: {', '.join(_set_app_fields)}; "
+                f"missing: {', '.join(_missing_app_fields)}. "
+                "GitHub App auth will NOT be used; falling back to PAT. "
+                "Set all three github_app_* inputs (or none) to silence this warning."
+            )
 
         # Validate required GitOps parameters
         if not all(
@@ -938,12 +975,39 @@ class FleetImporter(Processor):
                 aws_cloudfront_domain,
                 gitops_repo_url,
                 gitops_team_yaml_path,
-                github_token,
             ]
-        ):
+        ) or not (have_app_creds or github_token):
             raise ProcessorError(
                 "GitOps mode requires: aws_s3_bucket, aws_cloudfront_domain, "
-                "gitops_repo_url, gitops_team_yaml_path, and github_token"
+                "gitops_repo_url, gitops_team_yaml_path, and EITHER "
+                "(github_app_id + github_app_installation_id + github_app_private_key_path) "
+                "OR github_token"
+            )
+
+        # Prefer GitHub App auth so PRs are authored by the App's bot identity
+        # rather than the human user behind the PAT. The minted installation
+        # token is itself a Bearer credential the rest of the workflow can use
+        # interchangeably with a PAT for both git HTTPS and the REST API.
+        using_github_app = False
+        if have_app_creds:
+            _, _, _, api_base = self._parse_github_repo_url(gitops_repo_url)
+            self.output("Minting GitHub App installation token...")
+            github_token = self._get_installation_token(
+                api_base,
+                github_app_id,
+                github_app_installation_id,
+                github_app_private_key_path,
+            )
+            using_github_app = True
+            self.output(
+                f"Using GitHub App authentication (App ID {github_app_id}, "
+                f"installation {github_app_installation_id}) — PRs and commits "
+                "will be authored by the App's bot identity."
+            )
+        else:
+            self.output(
+                "Using PAT authentication — PRs and commits will be authored "
+                "by the PAT owner."
             )
 
         # Fleet deployment options
@@ -1187,6 +1251,9 @@ class FleetImporter(Processor):
                 team_yaml_path,
                 icon_relative_path,
                 policy_yaml_path,
+                github_token=github_token,
+                using_github_app=using_github_app,
+                github_app_id=github_app_id,
             )
             self.env["git_branch"] = branch_name
 
@@ -2111,7 +2178,7 @@ class FleetImporter(Processor):
 
         Args:
             repo_url: Git repository URL
-            github_token: GitHub personal access token
+            github_token: GitHub PAT or App installation access token
 
         Returns:
             Path to temporary directory containing cloned repo
@@ -2120,27 +2187,8 @@ class FleetImporter(Processor):
             ProcessorError: If clone fails
         """
         temp_dir = tempfile.mkdtemp(prefix="fleetimporter-gitops-")
-        askpass_script = None
-
+        askpass_script, git_env = self._make_git_auth_env(github_token)
         try:
-            # Create a temporary GIT_ASKPASS script to provide credentials securely
-            # This avoids embedding tokens in URLs where they could be logged
-            askpass_fd, askpass_script = tempfile.mkstemp(
-                prefix="git-askpass-", suffix=".sh", text=True
-            )
-            os.write(askpass_fd, f'#!/bin/sh\necho "{github_token}"\n'.encode())
-            os.close(askpass_fd)
-            os.chmod(askpass_script, 0o700)
-
-            # Set up minimal environment for git clone
-            git_env = {
-                "GIT_ASKPASS": askpass_script,
-                "GIT_TERMINAL_PROMPT": "0",
-                "PATH": os.environ.get("PATH", ""),
-                "HOME": os.environ.get("HOME", ""),
-            }
-
-            # Clone repository using GIT_ASKPASS for authentication
             subprocess.run(
                 ["git", "clone", repo_url, temp_dir],
                 check=True,
@@ -2150,14 +2198,12 @@ class FleetImporter(Processor):
             )
             return temp_dir
         except subprocess.CalledProcessError as e:
-            # Clean up temp dir on failure
             if Path(temp_dir).exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
             raise ProcessorError(
                 f"Failed to clone GitOps repository: {e.stderr or e.stdout}"
             )
         finally:
-            # Clean up the askpass script
             if askpass_script and os.path.exists(askpass_script):
                 try:
                     os.unlink(askpass_script)
@@ -2360,6 +2406,9 @@ class FleetImporter(Processor):
         team_yaml_path: str,
         icon_path: str = None,
         policy_yaml_path: str = None,
+        github_token: str = None,
+        using_github_app: bool = False,
+        github_app_id: str = None,
     ):
         """Create Git branch, commit changes, and push to remote.
 
@@ -2372,18 +2421,27 @@ class FleetImporter(Processor):
             team_yaml_path: Relative path to team YAML file
             icon_path: Optional relative path to icon file (e.g., ../../icons/claude.png)
             policy_yaml_path: Optional relative path to policy YAML file (e.g., lib/policies/chrome.yml)
+            github_token: PAT or App installation access token used for the push.
+            using_github_app: When True, set commit author to the App bot so commits
+                aren't attributed to the host user.
+            github_app_id: App ID, used to construct the bot's noreply email when
+                using_github_app is True.
 
         Raises:
             ProcessorError: If Git operations fail
         """
+        askpass_script = None
         try:
-            # Use explicit allowlist of environment variables for Git operations
-            # Only pass what Git actually needs, avoiding leakage of secrets
-            git_env = {
-                "GIT_TERMINAL_PROMPT": "0",
-                "PATH": os.environ.get("PATH", ""),
-                "HOME": os.environ.get("HOME", ""),
-            }
+            if github_token:
+                askpass_script, git_env = self._make_git_auth_env(github_token)
+            else:
+                # Fallback for callers that previously relied on a credential
+                # helper having cached creds during clone.
+                git_env = {
+                    "GIT_TERMINAL_PROMPT": "0",
+                    "PATH": os.environ.get("PATH", ""),
+                    "HOME": os.environ.get("HOME", ""),
+                }
 
             # Create and checkout new branch
             subprocess.run(
@@ -2394,6 +2452,34 @@ class FleetImporter(Processor):
                 text=True,
                 env=git_env,
             )
+
+            # When the workflow authenticated as a GitHub App, attribute the
+            # commit to the App's bot account so `git log` doesn't show the
+            # host user. PR author is set independently by whoever calls the
+            # create-PR API, but commit author is what most reviewers look at.
+            if using_github_app:
+                bot_name = "autopkg[bot]"
+                bot_email = (
+                    f"{github_app_id}+autopkg[bot]@users.noreply.github.com"
+                    if github_app_id
+                    else "autopkg[bot]@users.noreply.github.com"
+                )
+                subprocess.run(
+                    ["git", "config", "user.name", bot_name],
+                    cwd=repo_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=git_env,
+                )
+                subprocess.run(
+                    ["git", "config", "user.email", bot_email],
+                    cwd=repo_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=git_env,
+                )
 
             # Stage YAML files and icon
             # Convert relative paths (with ../) to paths relative to repo root
@@ -2446,6 +2532,12 @@ class FleetImporter(Processor):
             )
         except subprocess.CalledProcessError as e:
             raise ProcessorError(f"Git operation failed: {e.stderr or e.stdout}")
+        finally:
+            if askpass_script and os.path.exists(askpass_script):
+                try:
+                    os.unlink(askpass_script)
+                except Exception:
+                    pass  # Best effort cleanup
 
     def _parse_github_repo_url(self, repo_url: str) -> tuple[str, str, str, str]:
         """Parse a GitHub repo URL into (host, owner, repo, api_base).
@@ -2473,6 +2565,144 @@ class FleetImporter(Processor):
             else f"https://{host}/api/v3"
         )
         return host, owner, repo, api_base
+
+    @staticmethod
+    def _b64url(data: bytes) -> str:
+        """Base64url-encode bytes without padding (JWT format)."""
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    def _sign_jwt_rs256(self, payload: dict, private_key_path: str) -> str:
+        """Build a JWT signed with RS256 using a private key on disk.
+
+        Shells out to openssl so we don't add a Python crypto dependency.
+        The key is passed via ``-sign <path>`` so it never appears in argv
+        or the environment.
+        """
+        if not os.path.isfile(private_key_path):
+            raise ProcessorError(
+                f"GitHub App private key not found at: {private_key_path}"
+            )
+        header_b64 = self._b64url(b'{"alg":"RS256","typ":"JWT"}')
+        payload_b64 = self._b64url(
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        )
+        signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+        try:
+            result = subprocess.run(
+                ["openssl", "dgst", "-sha256", "-sign", private_key_path, "-binary"],
+                input=signing_input,
+                check=True,
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            raise ProcessorError(
+                "openssl binary not found; required to sign GitHub App JWTs."
+            )
+        except subprocess.CalledProcessError as e:
+            # Do not echo stderr verbatim — it can contain key-format hints.
+            raise ProcessorError(
+                "Failed to sign JWT with GitHub App private key "
+                f"(openssl exit {e.returncode})."
+            )
+        return f"{header_b64}.{payload_b64}.{self._b64url(result.stdout)}"
+
+    def _get_installation_token(
+        self,
+        api_base: str,
+        app_id: str,
+        installation_id: str,
+        private_key_path: str,
+    ) -> str:
+        """Mint a GitHub App installation access token.
+
+        Args:
+            api_base: GitHub REST API base, e.g. https://api.github.com or
+                https://github.example.com/api/v3.
+            app_id: Numeric GitHub App ID.
+            installation_id: Numeric installation ID.
+            private_key_path: Path to the App's PEM private key.
+
+        Returns:
+            Installation access token (valid ~1 hour).
+        """
+        try:
+            app_id_int = int(str(app_id).strip())
+        except ValueError:
+            raise ProcessorError(f"github_app_id must be numeric, got: {app_id!r}")
+        now = int(time.time())
+        # 60s clock-skew tolerance on iat; 9-minute lifetime (max is 10).
+        jwt = self._sign_jwt_rs256(
+            {"iat": now - 60, "exp": now + 540, "iss": app_id_int},
+            private_key_path,
+        )
+        url = f"{api_base}/app/installations/{installation_id}/access_tokens"
+        headers = {
+            "Authorization": f"Bearer {jwt}",
+            "Accept": "application/vnd.github+json",
+        }
+        try:
+            req = urllib.request.Request(url, method="POST", headers=headers)
+            with urllib.request.urlopen(
+                req, timeout=30, context=self._get_ssl_context()
+            ) as resp:
+                if resp.getcode() != 201:
+                    raise ProcessorError(
+                        "GitHub API returned unexpected status when minting "
+                        f"installation token: {resp.getcode()}"
+                    )
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode()
+            raise ProcessorError(
+                f"Failed to mint GitHub App installation token: {e.code} {error_body}"
+            )
+        except urllib.error.URLError as e:
+            raise ProcessorError(
+                f"Failed to connect to GitHub API for installation token: {e}"
+            )
+        token = data.get("token")
+        if not token:
+            raise ProcessorError(
+                "GitHub API response missing 'token' field for installation token."
+            )
+        return token
+
+    def _make_git_auth_env(self, github_token: str) -> tuple[str, dict]:
+        """Create a temporary GIT_ASKPASS script and the git env that uses it.
+
+        The token is supplied to git via the ``GIT_AUTH_TOKEN`` env var so it
+        never lands on disk or in process argv. The askpass script answers
+        both the Username and Password prompts, which lets the same auth path
+        work for personal access tokens AND GitHub App installation tokens
+        (the latter requires username ``x-access-token``).
+
+        Returns:
+            (askpass_path, git_env). Caller must ``os.unlink(askpass_path)``
+            once all git operations are finished.
+        """
+        askpass_fd, askpass_path = tempfile.mkstemp(
+            prefix="git-askpass-", suffix=".sh", text=True
+        )
+        os.write(
+            askpass_fd,
+            (
+                "#!/bin/sh\n"
+                'case "$1" in\n'
+                '  Username*) echo "x-access-token" ;;\n'
+                '  *)         echo "$GIT_AUTH_TOKEN" ;;\n'
+                "esac\n"
+            ).encode(),
+        )
+        os.close(askpass_fd)
+        os.chmod(askpass_path, 0o700)
+        git_env = {
+            "GIT_ASKPASS": askpass_path,
+            "GIT_AUTH_TOKEN": github_token,
+            "GIT_TERMINAL_PROMPT": "0",
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+        }
+        return askpass_path, git_env
 
     def _remote_branch_exists(self, repo_dir: str, branch_name: str) -> bool:
         """Return True if ``branch_name`` exists on the ``origin`` remote.
