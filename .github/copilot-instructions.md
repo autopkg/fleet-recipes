@@ -56,8 +56,11 @@ Always reference these instructions first and fallback to search or bash command
   - `export AWS_CLOUDFRONT_DOMAIN="d1234567890abc.cloudfront.net"`
   - `export FLEET_GITOPS_REPO_URL="https://github.com/org/fleet-gitops.git"`
   - `export FLEET_GITOPS_GITHUB_TOKEN="your-github-token"`
-  - `export FLEET_GITOPS_SOFTWARE_DIR="lib/macos/software"`
-  - `export FLEET_GITOPS_TEAM_YAML_PATH="teams/workstations.yml"`
+  - `export FLEET_GITOPS_SOFTWARE_DIR="platforms/macos/software"`
+  - `export FLEET_GITOPS_SCRIPTS_DIR="platforms/macos/scripts"`
+  - `export FLEET_GITOPS_ICONS_DIR="platforms/all/icons"`
+  - `export FLEET_GITOPS_POLICIES_DIR="platforms/macos/policies"`
+  - `export FLEET_GITOPS_TEAM_YAML_PATH="fleets/workstations.yml"`
 - Set `GIT_TERMINAL_PROMPT=0` to prevent interactive Git authentication prompts
 
 ### Testing and Validation
@@ -203,7 +206,7 @@ The FleetImporter processor automatically extracts and uploads application icons
 - **Path**: Manual icon paths are relative to recipe file directory or absolute
 - **API**: Uses Fleet's `PUT /api/v1/fleet/software/titles/:id/icon` endpoint
 - **Timing**: Icon is uploaded immediately after package upload (both direct and GitOps modes)
-- **GitOps**: Icons are copied to `lib/icons/` directory in GitOps repository with relative path references
+- **GitOps**: Icons are copied to `platforms/all/icons/` directory in GitOps repository with relative path references
 
 **How automatic extraction works:**
 1. Expands the `.pkg` file using `pkgutil --expand`
@@ -261,7 +264,7 @@ Process:
   - Adjust other optional variables as needed
 - Set mode-specific defaults:
   - `GITOPS_MODE`: Set to `false` for direct mode by default
-  - `FLEET_GITOPS_SOFTWARE_DIR` and `FLEET_GITOPS_TEAM_YAML_PATH`: Keep defaults unless you have specific requirements
+  - `FLEET_GITOPS_SOFTWARE_DIR`, `FLEET_GITOPS_SCRIPTS_DIR`, `FLEET_GITOPS_ICONS_DIR`, `FLEET_GITOPS_POLICIES_DIR`, and `FLEET_GITOPS_TEAM_YAML_PATH`: Keep defaults unless you have specific requirements
 - **Update PARENT_RECIPE_DEPENDENCIES.md**: If the recipe uses a parent from a repository not already listed in PARENT_RECIPE_DEPENDENCIES.md, add it to the documentation
   - Check the parent recipe's repository using `autopkg info <parent-recipe-id>`
   - Trace the full dependency chain (pkg recipes often depend on download recipes from other repos)

@@ -60,8 +60,11 @@ FleetImporter recipes support the following variables. Configuration can be set 
 | **GitOps Repository** | | | | |
 | `FLEET_GITOPS_REPO_URL` | Not used | Required | - | Git repository URL for Fleet configuration |
 | `FLEET_GITOPS_GITHUB_TOKEN` | Not used | Required | - | GitHub token with permissions to push commits and open pull requests (see GitHub token permissions below) |
-| `FLEET_GITOPS_SOFTWARE_DIR` | Not used | Optional | `lib/macos/software` | Directory for software YAML files in GitOps repo |
-| `FLEET_GITOPS_TEAM_YAML_PATH` | Not used | Optional | `teams/workstations.yml` | Path to team YAML file in GitOps repo |
+| `FLEET_GITOPS_SOFTWARE_DIR` | Not used | Optional | `platforms/macos/software` | Directory for software YAML files in GitOps repo |
+| `FLEET_GITOPS_SCRIPTS_DIR` | Not used | Optional | `platforms/macos/scripts` | Directory for install/uninstall/post-install scripts and pre-install queries in GitOps repo |
+| `FLEET_GITOPS_ICONS_DIR` | Not used | Optional | `platforms/all/icons` | Directory for software icons in GitOps repo |
+| `FLEET_GITOPS_POLICIES_DIR` | Not used | Optional | `platforms/macos/policies` | Directory for auto-update policy YAML files in GitOps repo |
+| `FLEET_GITOPS_TEAM_YAML_PATH` | Not used | Optional | `fleets/workstations.yml` | Path to team YAML file in GitOps repo |
 | **Software Configuration** | | | | |
 | `self_service` | Optional | Optional | `true` | Show software in Fleet Desktop |
 | `automatic_install` | Optional | Optional | `false` | Auto-install on matching devices |
@@ -161,7 +164,7 @@ defaults write com.github.autopkg FLEET_GITOPS_GITHUB_TOKEN "your-github-token"
 
 1. Package is uploaded to S3
 2. CloudFront URL is generated
-3. Software YAML files are created in GitOps repo
+3. Software YAML is created in the GitOps repo, along with any companion files it references (scripts/queries in `FLEET_GITOPS_SCRIPTS_DIR`, icon in `FLEET_GITOPS_ICONS_DIR`, auto-update policy in `FLEET_GITOPS_POLICIES_DIR`)
 4. Pull request is opened for review
 
 ---
@@ -203,7 +206,7 @@ Input:
   UNINSTALL_SCRIPT: uninstall-myapp.sh
 ```
 
-FleetImporter automatically detects file paths (scripts ending in `.sh` or containing `/`) and reads the file content. Relative paths are resolved relative to the recipe directory.
+FleetImporter distinguishes a path from inline content automatically: a value containing a newline or starting with a `#!` shebang is treated as an inline script body, while a single-line value is treated as a path and its file is read (relative paths resolve against the recipe directory). A single-line value ending in `.sh`, `.ps1`, or `.sql` that doesn't exist on disk is reported as a missing file. This means inline scripts that contain slashes (e.g. `/usr/sbin/chown`) are no longer mistaken for paths.
 
 **Benefits of script files:**
 - Keeps recipes clean and readable
@@ -245,6 +248,15 @@ All three script parameters support both inline and file path modes:
 - `install_script`: Custom installation script
 - `uninstall_script`: Custom uninstall script
 - `post_install_script`: Script to run after installation
+
+The `pre_install_query` parameter (osquery condition) is resolved the same way — provide the query inline or as a path to a file.
+
+### How scripts are delivered
+
+Regardless of how you provide a script, FleetImporter always resolves it to its content first, then delivers it according to the mode:
+
+- **Direct mode**: the script content is uploaded inline to Fleet's API.
+- **GitOps mode**: the content is written to a file in `FLEET_GITOPS_SCRIPTS_DIR` (default `platforms/macos/scripts`, e.g. `myapp-postinstall.sh`) and the package YAML references it by relative path. Fleet's GitOps spec requires `install_script.path` / `post_install_script.path` / etc. to point to a file in the repo, so inline content is never embedded directly into the package YAML.
 
 ---
 
@@ -299,7 +311,7 @@ When `automatic_update` is set to `true`, FleetImporter:
    - Link to install package automatically on policy failure
    - Platform targeting (macOS only)
 
-3. **Creates policy YAML** (GitOps mode): Writes policy definition to `lib/policies/` 
+3. **Creates policy YAML** (GitOps mode): Writes policy definition to `platforms/macos/policies/` 
 
 ### Policy naming
 

@@ -92,9 +92,12 @@ All recipes must include these arguments in the `Input` section:
 - `automatic_install` must be set to `false`
 - `categories`: At least one category (required when `self_service: true`)
 - `gitops_mode`: Set to `false` by default (users can override to enable GitOps)
-- GitOps-specific paths:
-  - `FLEET_GITOPS_SOFTWARE_DIR` must be set to `lib/macos/software`
-  - `FLEET_GITOPS_TEAM_YAML_PATH` must be set to `teams/workstations.yml`
+- GitOps-specific paths (Fleet's current repo layout):
+  - `FLEET_GITOPS_SOFTWARE_DIR` must be set to `platforms/macos/software`
+  - `FLEET_GITOPS_SCRIPTS_DIR` must be set to `platforms/macos/scripts`
+  - `FLEET_GITOPS_ICONS_DIR` must be set to `platforms/all/icons`
+  - `FLEET_GITOPS_POLICIES_DIR` must be set to `platforms/macos/policies`
+  - `FLEET_GITOPS_TEAM_YAML_PATH` must be set to `fleets/workstations.yml`
 - Auto-update policy automation (optional feature):
   - `AUTO_UPDATE_ENABLED`: Set to `false` by default (users can override to enable)
   - `AUTO_UPDATE_POLICY_NAME`: Set to `autopkg-auto-update-%NAME%` template
@@ -153,7 +156,7 @@ When `AUTO_UPDATE_ENABLED` is set to `true`:
 
 2. **Policy Creation**:
    - Direct mode: Uses Fleet API to create/update policy with automatic installation
-   - GitOps mode: Creates policy YAML file in `lib/policies/` directory
+   - GitOps mode: Creates policy YAML file in `platforms/macos/policies/` directory
 
 3. **Automatic Installation**: Policy failure triggers self-service installation of the latest version
 

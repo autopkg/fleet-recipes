@@ -114,12 +114,28 @@ class FleetImporter(Processor):
         },
         "gitops_software_dir": {
             "required": False,
-            "default": "lib/macos/software",
-            "description": "Directory for software package YAMLs within GitOps repo (default: lib/macos/software). Use FLEET_GITOPS_SOFTWARE_DIR environment variable.",
+            "default": "platforms/macos/software",
+            "description": "Directory for software package YAMLs within GitOps repo (default: platforms/macos/software). Use FLEET_GITOPS_SOFTWARE_DIR environment variable.",
+        },
+        "gitops_scripts_dir": {
+            "required": False,
+            "default": "platforms/macos/scripts",
+            "description": "Directory for install/uninstall/post-install scripts and pre-install queries within GitOps repo (default: platforms/macos/scripts). Use FLEET_GITOPS_SCRIPTS_DIR environment variable.",
+        },
+        "gitops_icons_dir": {
+            "required": False,
+            "default": "platforms/all/icons",
+            "description": "Directory for software icons within GitOps repo (default: platforms/all/icons). Use FLEET_GITOPS_ICONS_DIR environment variable.",
+        },
+        "gitops_policies_dir": {
+            "required": False,
+            "default": "platforms/macos/policies",
+            "description": "Directory for auto-update policy YAMLs within GitOps repo (default: platforms/macos/policies). Use FLEET_GITOPS_POLICIES_DIR environment variable.",
         },
         "gitops_team_yaml_path": {
             "required": False,
-            "description": "Path to team YAML file within GitOps repo (required for GitOps mode), e.g., teams/team-name.yml. Use FLEET_GITOPS_TEAM_YAML_PATH environment variable.",
+            "default": "fleets/workstations.yml",
+            "description": "Path to team YAML file within GitOps repo (default: fleets/workstations.yml), e.g., fleets/team-name.yml. Use FLEET_GITOPS_TEAM_YAML_PATH environment variable.",
         },
         "github_token": {
             "required": False,
@@ -487,6 +503,7 @@ class FleetImporter(Processor):
     def _create_or_update_policy_gitops(
         self,
         repo_dir: str,
+        policies_dir: str,
         software_title: str,
         version: str,
         pkg_path: str,
@@ -495,6 +512,8 @@ class FleetImporter(Processor):
 
         Args:
             repo_dir: Path to Git repository
+            policies_dir: Repo-relative directory for policy YAMLs
+                (e.g. platforms/macos/policies)
             software_title: Software title (used to reference the software package)
             version: Software version
             pkg_path: Path to package file for bundle ID extraction
@@ -545,20 +564,20 @@ class FleetImporter(Processor):
             },
         }
 
-        # Create lib/policies directory if it doesn't exist
-        policies_dir = Path(repo_dir) / "lib" / "policies"
-        policies_dir.mkdir(parents=True, exist_ok=True)
+        # Create the policies directory if it doesn't exist
+        policies_path = Path(repo_dir) / policies_dir
+        policies_path.mkdir(parents=True, exist_ok=True)
 
         # Write policy file
         slug = self._slugify(software_title)
         policy_filename = f"{slug}.yml"
-        policy_path = policies_dir / policy_filename
+        policy_path = policies_path / policy_filename
 
-        self.output(f"Writing auto-update policy to: lib/policies/{policy_filename}")
+        self.output(f"Writing auto-update policy to: {policies_dir}/{policy_filename}")
         self._write_yaml(policy_path, policy_yaml)
 
-        # Return relative path for Git operations
-        return f"lib/policies/{policy_filename}"
+        # Return repo-relative path for Git operations
+        return f"{policies_dir}/{policy_filename}"
 
     def main(self):
         # Check if GitOps mode is enabled
@@ -612,47 +631,20 @@ class FleetImporter(Processor):
         if not display_name:
             display_name = software_title
 
-        # Read script files if paths are provided, otherwise use inline content
-        install_script_input = self.env.get("install_script", "")
-        uninstall_script_input = self.env.get("uninstall_script", "")
-        pre_install_query = self.env.get("pre_install_query", "")
-        post_install_script_input = self.env.get("post_install_script", "")
-
-        # Check if inputs look like file paths (end with .sh or contain /) or inline scripts
-        # If they look like paths, read the file content
-        install_script = (
-            self._read_script_file(install_script_input)
-            if (
-                install_script_input
-                and (
-                    install_script_input.endswith(".sh") or "/" in install_script_input
-                )
-            )
-            else install_script_input
+        # Resolve each script/query input to its literal content. Inputs may be
+        # either an inline body or a path to a file containing one; see
+        # _resolve_script_content for how the two are distinguished.
+        install_script = self._resolve_script_content(
+            self.env.get("install_script", "")
         )
-
-        uninstall_script = (
-            self._read_script_file(uninstall_script_input)
-            if (
-                uninstall_script_input
-                and (
-                    uninstall_script_input.endswith(".sh")
-                    or "/" in uninstall_script_input
-                )
-            )
-            else uninstall_script_input
+        uninstall_script = self._resolve_script_content(
+            self.env.get("uninstall_script", "")
         )
-
-        post_install_script = (
-            self._read_script_file(post_install_script_input)
-            if (
-                post_install_script_input
-                and (
-                    post_install_script_input.endswith(".sh")
-                    or "/" in post_install_script_input
-                )
-            )
-            else post_install_script_input
+        pre_install_query = self._resolve_script_content(
+            self.env.get("pre_install_query", "")
+        )
+        post_install_script = self._resolve_script_content(
+            self.env.get("post_install_script", "")
         )
 
         # Validate label targeting - only one of include/exclude allowed
@@ -926,24 +918,36 @@ class FleetImporter(Processor):
         aws_s3_bucket = self.env.get("aws_s3_bucket")
         aws_cloudfront_domain = self.env.get("aws_cloudfront_domain")
         gitops_repo_url = self.env.get("gitops_repo_url")
-        gitops_software_dir = self.env.get("gitops_software_dir", "lib/macos/software")
-        gitops_team_yaml_path = self.env.get("gitops_team_yaml_path")
+        gitops_software_dir = self._gitops_path(
+            "gitops_software_dir", "platforms/macos/software"
+        )
+        gitops_scripts_dir = self._gitops_path(
+            "gitops_scripts_dir", "platforms/macos/scripts"
+        )
+        gitops_icons_dir = self._gitops_path("gitops_icons_dir", "platforms/all/icons")
+        gitops_policies_dir = self._gitops_path(
+            "gitops_policies_dir", "platforms/macos/policies"
+        )
+        gitops_team_yaml_path = self._gitops_path(
+            "gitops_team_yaml_path", "fleets/workstations.yml"
+        )
         github_token = self.env.get("github_token")
         s3_retention_versions = int(self.env.get("s3_retention_versions", 0))
 
-        # Validate required GitOps parameters
+        # Validate required GitOps parameters. gitops_team_yaml_path is omitted
+        # here because it always resolves to a value (recipe Input or the
+        # default applied by _gitops_path).
         if not all(
             [
                 aws_s3_bucket,
                 aws_cloudfront_domain,
                 gitops_repo_url,
-                gitops_team_yaml_path,
                 github_token,
             ]
         ):
             raise ProcessorError(
                 "GitOps mode requires: aws_s3_bucket, aws_cloudfront_domain, "
-                "gitops_repo_url, gitops_team_yaml_path, and github_token"
+                "gitops_repo_url, and github_token"
             )
 
         # Fleet deployment options
@@ -959,47 +963,20 @@ class FleetImporter(Processor):
         if not display_name:
             display_name = software_title
 
-        # Read script files if paths are provided, otherwise use inline content
-        install_script_input = self.env.get("install_script", "")
-        uninstall_script_input = self.env.get("uninstall_script", "")
-        pre_install_query = self.env.get("pre_install_query", "")
-        post_install_script_input = self.env.get("post_install_script", "")
-
-        # Check if inputs look like file paths (end with .sh or contain /) or inline scripts
-        # If they look like paths, read the file content
-        install_script = (
-            self._read_script_file(install_script_input)
-            if (
-                install_script_input
-                and (
-                    install_script_input.endswith(".sh") or "/" in install_script_input
-                )
-            )
-            else install_script_input
+        # Resolve each script/query input to its literal content. Inputs may be
+        # either an inline body or a path to a file containing one; see
+        # _resolve_script_content for how the two are distinguished.
+        install_script = self._resolve_script_content(
+            self.env.get("install_script", "")
         )
-
-        uninstall_script = (
-            self._read_script_file(uninstall_script_input)
-            if (
-                uninstall_script_input
-                and (
-                    uninstall_script_input.endswith(".sh")
-                    or "/" in uninstall_script_input
-                )
-            )
-            else uninstall_script_input
+        uninstall_script = self._resolve_script_content(
+            self.env.get("uninstall_script", "")
         )
-
-        post_install_script = (
-            self._read_script_file(post_install_script_input)
-            if (
-                post_install_script_input
-                and (
-                    post_install_script_input.endswith(".sh")
-                    or "/" in post_install_script_input
-                )
-            )
-            else post_install_script_input
+        pre_install_query = self._resolve_script_content(
+            self.env.get("pre_install_query", "")
+        )
+        post_install_script = self._resolve_script_content(
+            self.env.get("post_install_script", "")
         )
 
         icon_path_str = self.env.get("icon", "").strip()
@@ -1059,13 +1036,20 @@ class FleetImporter(Processor):
                 self.env["pull_request_url"] = existing_pr_url
                 return
 
-            # Handle icon - either from manual path or auto-extraction
-            icon_relative_path = None
+            # Handle icon - either from manual path or auto-extraction.
+            # icon_yaml_path is referenced from the package YAML (relative to
+            # it); icon_repo_path is repo-root-relative for git staging.
+            icon_yaml_path = None
+            icon_repo_path = None
 
             if icon_path_str:
                 # Manual icon path provided
-                icon_relative_path = self._copy_icon_to_gitops_repo(
-                    temp_dir, icon_path_str, software_title
+                icon_yaml_path, icon_repo_path = self._copy_icon_to_gitops_repo(
+                    temp_dir,
+                    icon_path_str,
+                    software_title,
+                    gitops_icons_dir,
+                    gitops_software_dir,
                 )
             else:
                 # Try to extract icon from package automatically
@@ -1077,8 +1061,12 @@ class FleetImporter(Processor):
                         f"Successfully extracted icon: {extracted_icon_path.name}"
                     )
                     # Copy extracted icon to GitOps repo
-                    icon_relative_path = self._copy_icon_to_gitops_repo(
-                        temp_dir, str(extracted_icon_path), software_title
+                    icon_yaml_path, icon_repo_path = self._copy_icon_to_gitops_repo(
+                        temp_dir,
+                        str(extracted_icon_path),
+                        software_title,
+                        gitops_icons_dir,
+                        gitops_software_dir,
                     )
                 else:
                     self.output(
@@ -1129,9 +1117,10 @@ class FleetImporter(Processor):
 
             # Create software package YAML file
             self.output(f"Creating software package YAML in {gitops_software_dir}")
-            package_yaml_path = self._create_software_package_yaml(
+            package_yaml_path, script_repo_paths = self._create_software_package_yaml(
                 temp_dir,
                 gitops_software_dir,
+                gitops_scripts_dir,
                 software_title,
                 cloudfront_url,
                 hash_sha256,
@@ -1139,7 +1128,7 @@ class FleetImporter(Processor):
                 uninstall_script,
                 pre_install_query,
                 post_install_script,
-                icon_relative_path,
+                icon_yaml_path,
                 display_name,
             )
 
@@ -1165,6 +1154,7 @@ class FleetImporter(Processor):
                 try:
                     policy_yaml_path = self._create_or_update_policy_gitops(
                         temp_dir,
+                        gitops_policies_dir,
                         software_title,
                         version,
                         pkg_path,
@@ -1185,8 +1175,9 @@ class FleetImporter(Processor):
                 version,
                 package_yaml_path,
                 team_yaml_path,
-                icon_relative_path,
+                icon_repo_path,
                 policy_yaml_path,
+                script_repo_paths,
             )
             self.env["git_branch"] = branch_name
 
@@ -1236,50 +1227,103 @@ class FleetImporter(Processor):
         # Remove leading/trailing hyphens
         return slug.strip("-")
 
-    def _read_script_file(self, script_path_str: str) -> str:
-        """Read script content from a file path.
+    # Extensions that mark a single-line input as *intended* to be a file path
+    # rather than a one-line inline script/query.
+    _SCRIPT_PATH_EXTENSIONS = (".sh", ".zsh", ".bash", ".ps1", ".sql")
+
+    def _resolve_script_content(self, value: str) -> str:
+        """Resolve a script/query input to its literal content.
+
+        The input may be either an inline script/query body or a path to a
+        file containing one. We must not treat the mere presence of a "/" as
+        proof of a path: real script bodies are full of slashes (e.g.
+        "/usr/sbin/chown", the "#!/bin/sh" shebang). Resolution rules:
+
+          - Empty -> empty.
+          - Contains a newline, or starts with "#!" (shebang) -> inline body.
+            Paths never contain newlines, and a shebang is unambiguous.
+          - Single line that resolves to an existing file -> file contents.
+          - Single line ending in a known script/query extension but with no
+            such file on disk -> warn and return empty (it was meant to be a
+            path that doesn't exist - matches the prior "file not found"
+            behavior rather than silently shipping a bogus path).
+          - Anything else -> treat as an inline one-liner.
 
         Args:
-            script_path_str: Path to script file (relative or absolute)
+            value: Raw input - an inline body or a path (relative or absolute).
 
         Returns:
-            Script content as string, or empty string if file not found
+            The resolved script/query content as a string ("" if unresolved).
 
         Notes:
-            - If path is relative, resolves relative to recipe directory
-            - Returns empty string if file doesn't exist (with warning)
+            - Relative paths resolve against RECIPE_DIR when available.
         """
-        if not script_path_str:
+        if not value:
             return ""
 
-        script_path = Path(script_path_str)
+        # A newline or shebang means this is a body, never a path.
+        if "\n" in value or value.lstrip().startswith("#!"):
+            return value
 
-        # Resolve relative paths relative to recipe directory
+        # Single-line input: it might be a path to a script/query file.
+        script_path = Path(value)
         if not script_path.is_absolute():
             recipe_dir = self.env.get("RECIPE_DIR")
             if recipe_dir:
-                script_path = (Path(recipe_dir) / script_path_str).resolve()
+                script_path = (Path(recipe_dir) / value).resolve()
             else:
                 script_path = script_path.expanduser().resolve()
         else:
             script_path = script_path.expanduser().resolve()
 
-        if script_path.exists():
+        if script_path.is_file():
             try:
-                with open(script_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = script_path.read_text(encoding="utf-8")
                 self.output(f"Read script file: {script_path}")
                 return content
             except Exception as e:
                 self.output(
-                    f"Warning: Could not read script file {script_path}: {e}. Using empty script."
+                    f"Warning: Could not read script file {script_path}: {e}. "
+                    "Using empty script."
                 )
                 return ""
-        else:
+
+        # Looks like it was meant to be a path (by extension) but no file exists.
+        if value.endswith(self._SCRIPT_PATH_EXTENSIONS):
             self.output(
                 f"Warning: Script file not found: {script_path}. Using empty script."
             )
             return ""
+
+        # Otherwise it's a short inline one-liner script/query.
+        return value
+
+    # Matches an AutoPkg "%VARIABLE%" reference left unsubstituted because the
+    # variable was undefined in the recipe/CLI/prefs/parent chain.
+    _UNSUBSTITUTED_VAR = re.compile(r"^%[a-zA-Z_][a-zA-Z0-9_]*%$")
+
+    def _gitops_path(self, key: str, default: str) -> str:
+        """Resolve a GitOps path/dir input, falling back to the default.
+
+        Returns the default when the value is unset/empty or when AutoPkg left a
+        "%PLACEHOLDER%" unsubstituted (which happens when the corresponding
+        recipe Input variable is undefined). Without this guard an undefined
+        variable would be used literally — e.g. creating a directory named
+        "%FLEET_GITOPS_SCRIPTS_DIR%" — because AutoPkg's own default only
+        applies when the processor argument is absent entirely, not when it is
+        present but references an undefined variable.
+
+        Args:
+            key: Processor env key (e.g. "gitops_scripts_dir").
+            default: Value to use when unset/empty/unsubstituted.
+
+        Returns:
+            The configured path, or the default.
+        """
+        value = (self.env.get(key) or "").strip()
+        if not value or self._UNSUBSTITUTED_VAR.match(value):
+            return default
+        return value
 
     def _extract_icon_from_pkg(self, pkg_path: Path) -> Path | None:
         """Extract and convert app icon from a package to PNG format.
@@ -2044,17 +2088,28 @@ class FleetImporter(Processor):
             self.output(f"Warning: S3 cleanup failed: {e}")
 
     def _copy_icon_to_gitops_repo(
-        self, repo_dir: str, icon_path_str: str, software_title: str
-    ) -> str:
-        """Copy icon file to GitOps repository under lib/icons.
+        self,
+        repo_dir: str,
+        icon_path_str: str,
+        software_title: str,
+        icons_dir: str,
+        software_dir: str,
+    ) -> tuple:
+        """Copy icon file into the GitOps repository's icons directory.
 
         Args:
             repo_dir: Path to Git repository
             icon_path_str: Path to icon file (relative to recipe or absolute)
             software_title: Software title for naming
+            icons_dir: Repo-relative directory for icons (e.g. platforms/all/icons)
+            software_dir: Repo-relative directory holding the package YAML, used
+                to compute the icon's path relative to that YAML
 
         Returns:
-            Relative path from software YAML to icon (e.g., ../icons/claude.png)
+            Tuple of (yaml_relative_path, repo_relative_path):
+              - yaml_relative_path references the icon from the package YAML
+                (e.g. ../../all/icons/claude.png).
+              - repo_relative_path is relative to the repo root, for `git add`.
 
         Raises:
             ProcessorError: If icon file not found or invalid
@@ -2090,21 +2145,25 @@ class FleetImporter(Processor):
             )
 
         # Create icons directory in GitOps repo
-        icons_dir = Path(repo_dir) / "lib" / "icons"
-        icons_dir.mkdir(parents=True, exist_ok=True)
+        icons_path = Path(repo_dir) / icons_dir
+        icons_path.mkdir(parents=True, exist_ok=True)
 
         # Use slugified software title for icon filename
         slug = self._slugify(software_title)
         icon_filename = f"{slug}.png"
-        dest_icon_path = icons_dir / icon_filename
+        dest_icon_path = icons_path / icon_filename
 
         # Copy icon to GitOps repo
-        self.output(f"Copying icon to GitOps repo: lib/icons/{icon_filename}")
+        self.output(f"Copying icon to GitOps repo: {icons_dir}/{icon_filename}")
         shutil.copy2(icon_path, dest_icon_path)
 
-        # Return relative path from lib/macos/software to lib/icons
-        # From lib/macos/software/package.yml to lib/icons/icon.png = ../../icons/icon.png
-        return f"../../icons/{icon_filename}"
+        # repo-relative path for git staging; yaml-relative path (relative to the
+        # package YAML's directory) for the `icon.path` reference.
+        repo_relative_path = dest_icon_path.relative_to(repo_dir).as_posix()
+        yaml_relative_path = Path(
+            os.path.relpath(dest_icon_path, Path(repo_dir) / software_dir)
+        ).as_posix()
+        return yaml_relative_path, repo_relative_path
 
     def _clone_gitops_repo(self, repo_url: str, github_token: str) -> str:
         """Clone GitOps repository to a temporary directory.
@@ -2211,6 +2270,7 @@ class FleetImporter(Processor):
         self,
         repo_dir: str,
         software_dir: str,
+        scripts_dir: str,
         software_title: str,
         cloudfront_url: str,
         hash_sha256: str,
@@ -2220,12 +2280,13 @@ class FleetImporter(Processor):
         post_install_script: str,
         icon_path: str = None,
         display_name: str = "",
-    ) -> str:
-        """Create software package YAML file in lib/ directory.
+    ) -> tuple:
+        """Create the software package YAML in the GitOps software directory.
 
         Args:
             repo_dir: Path to Git repository
-            software_dir: Directory for software YAMLs (e.g., lib/macos/software)
+            software_dir: Directory for software YAMLs (e.g. platforms/macos/software)
+            scripts_dir: Directory for script/query files (e.g. platforms/macos/scripts)
             software_title: Software title
             cloudfront_url: CloudFront URL for package
             hash_sha256: SHA-256 hash of package
@@ -2233,11 +2294,17 @@ class FleetImporter(Processor):
             uninstall_script: Custom uninstall script
             pre_install_query: Pre-install query
             post_install_script: Post-install script
-            icon_path: Relative path to icon file in GitOps repo (e.g., ../icons/claude.png)
+            icon_path: Path to icon file relative to the package YAML
+                (e.g. ../../all/icons/claude.png)
             display_name: Custom display name for the software in Fleet UI
 
         Returns:
-            Relative path to created package YAML file (for use in team YAML)
+            Tuple of (package_yaml_relative_path, script_repo_paths):
+              - package_yaml_relative_path is the path from the team YAML to the
+                created package YAML (e.g. ../platforms/macos/software/chrome.yml).
+              - script_repo_paths is a list of repo-root-relative paths for any
+                script/query files written alongside the package YAML, so the
+                caller can stage them for commit.
 
         Raises:
             ProcessorError: If YAML creation fails
@@ -2261,23 +2328,88 @@ class FleetImporter(Processor):
         if icon_path:
             package_entry["icon"] = {"path": icon_path}
 
-        # Add optional script paths if provided
-        if install_script:
-            package_entry["install_script"] = {"path": install_script}
-        if uninstall_script:
-            package_entry["uninstall_script"] = {"path": uninstall_script}
-        if pre_install_query:
-            package_entry["pre_install_query"] = {"path": pre_install_query}
-        if post_install_script:
-            package_entry["post_install_script"] = {"path": post_install_script}
+        # Scripts and the pre-install query must be referenced by a *path* to a
+        # file in the repo; Fleet reads each file's contents during the GitOps
+        # run (install_script.path, post_install_script.path, etc.). They cannot
+        # be embedded inline, so write each non-empty value to its own file in
+        # the scripts directory and reference it by a path relative to this
+        # package YAML. See https://fleetdm.com/docs/configuration/yaml-files.
+        script_repo_paths = []
+        for field, kind, content, extension in (
+            ("install_script", "install", install_script, ".sh"),
+            ("uninstall_script", "uninstall", uninstall_script, ".sh"),
+            ("post_install_script", "postinstall", post_install_script, ".sh"),
+            ("pre_install_query", "preinstall-query", pre_install_query, ".sql"),
+        ):
+            if not content:
+                continue
+            repo_rel_path, yaml_rel_path = self._write_gitops_script(
+                repo_dir, software_dir, scripts_dir, slug, kind, content, extension
+            )
+            package_entry[field] = {"path": yaml_rel_path}
+            script_repo_paths.append(repo_rel_path)
 
         # Package YAML is a list with single entry
         self._write_yaml(package_path, [package_entry])
 
-        # Return relative path from team YAML to package YAML
-        # E.g., if team YAML is teams/team-name.yml and package is lib/macos/software/chrome.yml
-        # then relative path is ../lib/macos/software/chrome.yml
-        return f"../{software_dir}/{package_filename}"
+        # Return relative path from team YAML to package YAML.
+        # E.g. if team YAML is fleets/team-name.yml and package is
+        # platforms/macos/software/chrome.yml, the relative path is
+        # ../platforms/macos/software/chrome.yml
+        return f"../{software_dir}/{package_filename}", script_repo_paths
+
+    def _write_gitops_script(
+        self,
+        repo_dir: str,
+        software_dir: str,
+        scripts_dir: str,
+        slug: str,
+        kind: str,
+        content: str,
+        extension: str,
+    ) -> tuple:
+        """Write a script/query body to a file in the GitOps repo.
+
+        Fleet's GitOps software spec references scripts and the pre-install
+        query by *path* (install_script.path, post_install_script.path, etc.),
+        not inline content. This writes the resolved body to a standalone file
+        in the scripts directory and returns the paths needed to (a) reference
+        it from the package YAML and (b) stage it for commit.
+
+        Args:
+            repo_dir: Path to the cloned GitOps repository.
+            software_dir: Directory holding the package YAML (e.g.
+                platforms/macos/software), used to compute the relative reference.
+            scripts_dir: Directory for the script file (e.g.
+                platforms/macos/scripts), relative to the repo root.
+            slug: Slugified software title, used in the filename.
+            kind: Short descriptor of the script role (e.g. "postinstall").
+            content: The script or query body to write.
+            extension: File extension, including the leading dot (e.g. ".sh").
+
+        Returns:
+            Tuple of (repo_relative_path, yaml_relative_path):
+              - repo_relative_path is relative to the repo root, for `git add`.
+              - yaml_relative_path is relative to the package YAML directory,
+                for the `path:` reference inside the package YAML.
+        """
+        scripts_path = Path(repo_dir) / scripts_dir
+        scripts_path.mkdir(parents=True, exist_ok=True)
+
+        filename = f"{slug}-{kind}{extension}"
+        script_path = scripts_path / filename
+
+        # Normalize to a single trailing newline so files are POSIX-clean.
+        self.output(f"Writing {kind} script to: {scripts_dir}/{filename}")
+        script_path.write_text(content.rstrip("\n") + "\n", encoding="utf-8")
+
+        repo_relative_path = script_path.relative_to(repo_dir).as_posix()
+        # Reference relative to the package YAML's directory; Fleet resolves
+        # package-level script paths against the package YAML's location.
+        yaml_relative_path = Path(
+            os.path.relpath(script_path, Path(repo_dir) / software_dir)
+        ).as_posix()
+        return repo_relative_path, yaml_relative_path
 
     def _update_team_yaml(
         self,
@@ -2360,6 +2492,7 @@ class FleetImporter(Processor):
         team_yaml_path: str,
         icon_path: str = None,
         policy_yaml_path: str = None,
+        script_paths: list = None,
     ):
         """Create Git branch, commit changes, and push to remote.
 
@@ -2370,8 +2503,13 @@ class FleetImporter(Processor):
             version: Software version for commit message
             package_yaml_path: Relative path to package YAML file
             team_yaml_path: Relative path to team YAML file
-            icon_path: Optional relative path to icon file (e.g., ../../icons/claude.png)
-            policy_yaml_path: Optional relative path to policy YAML file (e.g., lib/policies/chrome.yml)
+            icon_path: Optional repo-root-relative path to the icon file
+                (e.g., platforms/all/icons/chrome.png)
+            policy_yaml_path: Optional repo-root-relative path to the policy YAML
+                file (e.g., platforms/macos/policies/chrome.yml)
+            script_paths: Optional list of repo-root-relative paths to script/
+                query files referenced by the package YAML (e.g.,
+                platforms/macos/scripts/chrome-postinstall.sh)
 
         Raises:
             ProcessorError: If Git operations fail
@@ -2395,25 +2533,26 @@ class FleetImporter(Processor):
                 env=git_env,
             )
 
-            # Stage YAML files and icon
-            # Convert relative paths (with ../) to paths relative to repo root
-            # package_yaml_path is like ../lib/macos/software/chrome.yml
-            # team_yaml_path is like Path object to teams/team-name.yml
+            # Stage YAML files and icon (all paths relative to the repo root).
+            # package_yaml_path is like ../platforms/macos/software/chrome.yml
+            # (relative to the team YAML); strip the leading ../ to get a
+            # repo-root-relative path. team_yaml_path is an absolute Path.
             pkg_file = package_yaml_path.replace("../", "")
             team_file = str(team_yaml_path.relative_to(repo_dir))
 
             files_to_add = [pkg_file, team_file]
 
-            # Add icon file if provided
+            # Add icon file if provided (already repo-root-relative)
             if icon_path:
-                # icon_path is like ../../icons/claude.png, need to convert to lib/icons/claude.png
-                icon_file = icon_path.replace("../../", "lib/")
-                files_to_add.append(icon_file)
+                files_to_add.append(icon_path)
 
-            # Add policy file if provided
+            # Add policy file if provided (already repo-root-relative)
             if policy_yaml_path:
-                # policy_yaml_path is already relative to repo root (e.g., lib/policies/chrome.yml)
                 files_to_add.append(policy_yaml_path)
+
+            # Add script/query files if provided (already repo-root-relative)
+            if script_paths:
+                files_to_add.extend(script_paths)
 
             subprocess.run(
                 ["git", "add"] + files_to_add,

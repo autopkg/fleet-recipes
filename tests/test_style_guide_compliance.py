@@ -12,8 +12,10 @@ This validates:
 6. automatic_install (or AUTOMATIC_INSTALL for legacy) must be set to false
 7. categories (or CATEGORIES for legacy) required when self_service is true
 8. gitops_mode (or GITOPS_MODE for legacy) variable exists in combined recipes (defaults to false)
-9. FLEET_GITOPS_SOFTWARE_DIR must be set to "lib/macos/software"
-10. FLEET_GITOPS_TEAM_YAML_PATH must be set to "teams/workstations.yml"
+9. FLEET_GITOPS_* directories must match Fleet's repo layout
+   (software: platforms/macos/software, scripts: platforms/macos/scripts,
+   icons: platforms/all/icons, policies: platforms/macos/policies)
+10. FLEET_GITOPS_TEAM_YAML_PATH must be set to "fleets/workstations.yml"
 11. Categories use only supported values
 12. Process arguments: lowercase Input variables auto-pass (preferred) or use %UPPERCASE% (legacy)
 13. Vendor folder structure
@@ -55,6 +57,24 @@ class StyleGuideValidator:
         "Communication",
         "Developer tools",
         "Productivity",
+    }
+
+    # GitOps Input path variables -> required value (Fleet's current repo layout).
+    GITOPS_INPUT_PATHS = {
+        "FLEET_GITOPS_SOFTWARE_DIR": "platforms/macos/software",
+        "FLEET_GITOPS_SCRIPTS_DIR": "platforms/macos/scripts",
+        "FLEET_GITOPS_ICONS_DIR": "platforms/all/icons",
+        "FLEET_GITOPS_POLICIES_DIR": "platforms/macos/policies",
+        "FLEET_GITOPS_TEAM_YAML_PATH": "fleets/workstations.yml",
+    }
+
+    # GitOps Process arguments -> the %MACRO% they must reference.
+    GITOPS_PROCESS_ARGS = {
+        "gitops_software_dir": "%FLEET_GITOPS_SOFTWARE_DIR%",
+        "gitops_scripts_dir": "%FLEET_GITOPS_SCRIPTS_DIR%",
+        "gitops_icons_dir": "%FLEET_GITOPS_ICONS_DIR%",
+        "gitops_policies_dir": "%FLEET_GITOPS_POLICIES_DIR%",
+        "gitops_team_yaml_path": "%FLEET_GITOPS_TEAM_YAML_PATH%",
     }
 
     def __init__(self):
@@ -156,8 +176,7 @@ class StyleGuideValidator:
 
         # Validate GitOps-specific paths (only for combined and legacy GitOps recipes)
         if is_combined or is_legacy_gitops:
-            self.validate_gitops_software_dir(recipe_path, input_section)
-            self.validate_gitops_team_yaml_path(recipe_path, input_section)
+            self.validate_gitops_paths(recipe_path, input_section)
 
         # Validate categories requirement (when self_service is true)
         self.validate_categories_requirement(recipe_path, input_section)
@@ -491,45 +510,22 @@ class StyleGuideValidator:
         else:
             print(f"   ✅ Label Targeting: None (valid)")
 
-    def validate_gitops_software_dir(self, recipe_path, input_section):
-        """Validate FLEET_GITOPS_SOFTWARE_DIR is set to 'lib/macos/software'."""
-        software_dir = input_section.get("FLEET_GITOPS_SOFTWARE_DIR")
-        expected = "lib/macos/software"
-
-        if software_dir is None:
-            self.errors.append(
-                f"{recipe_path}: Missing FLEET_GITOPS_SOFTWARE_DIR in Input section"
-            )
-            print(f"   ❌ FLEET_GITOPS_SOFTWARE_DIR: Missing (required for GitOps)")
-        elif software_dir != expected:
-            self.errors.append(
-                f"{recipe_path}: FLEET_GITOPS_SOFTWARE_DIR must be '{expected}', got '{software_dir}'"
-            )
-            print(
-                f"   ❌ FLEET_GITOPS_SOFTWARE_DIR: '{software_dir}' (must be '{expected}')"
-            )
-        else:
-            print(f"   ✅ FLEET_GITOPS_SOFTWARE_DIR: '{expected}'")
-
-    def validate_gitops_team_yaml_path(self, recipe_path, input_section):
-        """Validate FLEET_GITOPS_TEAM_YAML_PATH is set to 'teams/workstations.yml'."""
-        team_yaml_path = input_section.get("FLEET_GITOPS_TEAM_YAML_PATH")
-        expected = "teams/workstations.yml"
-
-        if team_yaml_path is None:
-            self.errors.append(
-                f"{recipe_path}: Missing FLEET_GITOPS_TEAM_YAML_PATH in Input section"
-            )
-            print(f"   ❌ FLEET_GITOPS_TEAM_YAML_PATH: Missing (required for GitOps)")
-        elif team_yaml_path != expected:
-            self.errors.append(
-                f"{recipe_path}: FLEET_GITOPS_TEAM_YAML_PATH must be '{expected}', got '{team_yaml_path}'"
-            )
-            print(
-                f"   ❌ FLEET_GITOPS_TEAM_YAML_PATH: '{team_yaml_path}' (must be '{expected}')"
-            )
-        else:
-            print(f"   ✅ FLEET_GITOPS_TEAM_YAML_PATH: '{expected}'")
+    def validate_gitops_paths(self, recipe_path, input_section):
+        """Validate the GitOps Input path variables match the expected layout."""
+        for var_name, expected in self.GITOPS_INPUT_PATHS.items():
+            value = input_section.get(var_name)
+            if value is None:
+                self.errors.append(
+                    f"{recipe_path}: Missing {var_name} in Input section"
+                )
+                print(f"   ❌ {var_name}: Missing (required for GitOps)")
+            elif value != expected:
+                self.errors.append(
+                    f"{recipe_path}: {var_name} must be '{expected}', got '{value}'"
+                )
+                print(f"   ❌ {var_name}: '{value}' (must be '{expected}')")
+            else:
+                print(f"   ✅ {var_name}: '{expected}'")
 
     def validate_process_arguments(self, recipe_path, args, is_combined):
         """Validate Process section arguments reference Input variables correctly.
@@ -578,31 +574,19 @@ class StyleGuideValidator:
 
         # Check combined recipe Process arguments (includes GitOps support)
         if is_combined:
-            software_dir_arg = args.get("gitops_software_dir")
-            if software_dir_arg != "%FLEET_GITOPS_SOFTWARE_DIR%":
-                self.errors.append(
-                    f"{recipe_path}: Process argument 'gitops_software_dir' must be '%FLEET_GITOPS_SOFTWARE_DIR%', got '{software_dir_arg}'"
-                )
-                print(
-                    f"   ❌ Process gitops_software_dir: '{software_dir_arg}' (must be '%FLEET_GITOPS_SOFTWARE_DIR%')"
-                )
-            else:
-                print(
-                    f"   ✅ Process gitops_software_dir: '%FLEET_GITOPS_SOFTWARE_DIR%'"
-                )
-
-            team_yaml_path_arg = args.get("gitops_team_yaml_path")
-            if team_yaml_path_arg != "%FLEET_GITOPS_TEAM_YAML_PATH%":
-                self.errors.append(
-                    f"{recipe_path}: Process argument 'gitops_team_yaml_path' must be '%FLEET_GITOPS_TEAM_YAML_PATH%', got '{team_yaml_path_arg}'"
-                )
-                print(
-                    f"   ❌ Process gitops_team_yaml_path: '{team_yaml_path_arg}' (must be '%FLEET_GITOPS_TEAM_YAML_PATH%')"
-                )
-            else:
-                print(
-                    f"   ✅ Process gitops_team_yaml_path: '%FLEET_GITOPS_TEAM_YAML_PATH%'"
-                )
+            for arg_name, expected_macro in self.GITOPS_PROCESS_ARGS.items():
+                arg_value = args.get(arg_name)
+                if arg_value != expected_macro:
+                    self.errors.append(
+                        f"{recipe_path}: Process argument '{arg_name}' must be "
+                        f"'{expected_macro}', got '{arg_value}'"
+                    )
+                    print(
+                        f"   ❌ Process {arg_name}: '{arg_value}' "
+                        f"(must be '{expected_macro}')"
+                    )
+                else:
+                    print(f"   ✅ Process {arg_name}: '{expected_macro}'")
 
     def report_results(self):
         """Print final validation report and return exit code."""
@@ -642,10 +626,10 @@ class StyleGuideValidator:
             print("   ✅ self_service set to true in all recipes")
             print("   ✅ automatic_install set to false in all recipes")
             print(
-                "   ✅ FLEET_GITOPS_SOFTWARE_DIR set to 'lib/macos/software' in GitOps recipes"
+                "   ✅ FLEET_GITOPS_* directories match Fleet's repo layout in GitOps recipes"
             )
             print(
-                "   ✅ FLEET_GITOPS_TEAM_YAML_PATH set to 'teams/workstations.yml' in GitOps recipes"
+                "   ✅ FLEET_GITOPS_TEAM_YAML_PATH set to 'fleets/workstations.yml' in GitOps recipes"
             )
             print("   ✅ Categories use only supported values (when specified)")
             print(

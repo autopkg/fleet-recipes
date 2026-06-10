@@ -20,8 +20,11 @@ Validates that all recipe files comply with the style guide requirements:
 - ✅ `GITOPS_MODE` variable exists and defaults to `false` in combined recipes
 - ✅ `CATEGORIES` required when `SELF_SERVICE` is `true`
 - ✅ Only one of `LABELS_INCLUDE_ANY` or `LABELS_EXCLUDE_ANY` can be set (mutually exclusive)
-- ✅ `FLEET_GITOPS_SOFTWARE_DIR` must be set to `lib/macos/software`
-- ✅ `FLEET_GITOPS_TEAM_YAML_PATH` must be set to `teams/workstations.yml`
+- ✅ `FLEET_GITOPS_SOFTWARE_DIR` must be set to `platforms/macos/software`
+- ✅ `FLEET_GITOPS_SCRIPTS_DIR` must be set to `platforms/macos/scripts`
+- ✅ `FLEET_GITOPS_ICONS_DIR` must be set to `platforms/all/icons`
+- ✅ `FLEET_GITOPS_POLICIES_DIR` must be set to `platforms/macos/policies`
+- ✅ `FLEET_GITOPS_TEAM_YAML_PATH` must be set to `fleets/workstations.yml`
 - ✅ Categories use only supported Fleet values: `Browsers`, `Communication`, `Developer tools`, `Productivity`
 - ✅ All Process arguments properly reference Input variables (`%VARIABLE%` format)
 
@@ -73,13 +76,19 @@ Found 20 recipe files to validate
    ✅ SELF_SERVICE: true
    ✅ AUTOMATIC_INSTALL: false
    ✅ GITOPS_MODE: false (default)
-   ✅ FLEET_GITOPS_SOFTWARE_DIR: 'lib/macos/software'
-   ✅ FLEET_GITOPS_TEAM_YAML_PATH: 'teams/workstations.yml'
+   ✅ FLEET_GITOPS_SOFTWARE_DIR: 'platforms/macos/software'
+   ✅ FLEET_GITOPS_SCRIPTS_DIR: 'platforms/macos/scripts'
+   ✅ FLEET_GITOPS_ICONS_DIR: 'platforms/all/icons'
+   ✅ FLEET_GITOPS_POLICIES_DIR: 'platforms/macos/policies'
+   ✅ FLEET_GITOPS_TEAM_YAML_PATH: 'fleets/workstations.yml'
    ✅ CATEGORIES: ['Developer tools'] (required with SELF_SERVICE)
    ✅ Label Targeting: None (valid)
    ✅ Process self_service: '%SELF_SERVICE%'
    ✅ Process automatic_install: '%AUTOMATIC_INSTALL%'
    ✅ Process gitops_software_dir: '%FLEET_GITOPS_SOFTWARE_DIR%'
+   ✅ Process gitops_scripts_dir: '%FLEET_GITOPS_SCRIPTS_DIR%'
+   ✅ Process gitops_icons_dir: '%FLEET_GITOPS_ICONS_DIR%'
+   ✅ Process gitops_policies_dir: '%FLEET_GITOPS_POLICIES_DIR%'
    ✅ Process gitops_team_yaml_path: '%FLEET_GITOPS_TEAM_YAML_PATH%'
    ✅ Validation complete
 
@@ -117,8 +126,8 @@ Validated requirements:
    ✅ GITOPS_MODE set to false in combined recipes
    ✅ CATEGORIES required when SELF_SERVICE is true
    ✅ Only one of LABELS_INCLUDE_ANY/LABELS_EXCLUDE_ANY (mutually exclusive)
-   ✅ FLEET_GITOPS_SOFTWARE_DIR set to 'lib/macos/software'
-   ✅ FLEET_GITOPS_TEAM_YAML_PATH set to 'teams/workstations.yml'
+   ✅ FLEET_GITOPS_* directories match Fleet's repo layout
+   ✅ FLEET_GITOPS_TEAM_YAML_PATH set to 'fleets/workstations.yml'
    ✅ Categories use only supported values (when specified)
    ✅ All Process arguments reference Input variables correctly
 ```
@@ -193,10 +202,14 @@ Input:
 
 ### Test Fails with GitOps Path Errors
 
-All recipes (both combined and legacy) must include GitOps configuration paths:
-- `FLEET_GITOPS_SOFTWARE_DIR: lib/macos/software` in Input section
-- `FLEET_GITOPS_TEAM_YAML_PATH: teams/workstations.yml` in Input section
-- Both values referenced in Process arguments (for combined recipes)
+All recipes (both combined and legacy) must include GitOps configuration paths
+(Fleet's current repo layout):
+- `FLEET_GITOPS_SOFTWARE_DIR: platforms/macos/software` in Input section
+- `FLEET_GITOPS_SCRIPTS_DIR: platforms/macos/scripts` in Input section
+- `FLEET_GITOPS_ICONS_DIR: platforms/all/icons` in Input section
+- `FLEET_GITOPS_POLICIES_DIR: platforms/macos/policies` in Input section
+- `FLEET_GITOPS_TEAM_YAML_PATH: fleets/workstations.yml` in Input section
+- All values referenced in Process arguments (for combined recipes)
 
 ### Test Fails with Invalid Categories
 

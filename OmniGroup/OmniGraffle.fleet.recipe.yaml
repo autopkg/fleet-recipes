@@ -22,8 +22,11 @@ Input:
   labels_exclude_any: []
   
   gitops_mode: false
-  FLEET_GITOPS_SOFTWARE_DIR: lib/macos/software
-  FLEET_GITOPS_TEAM_YAML_PATH: teams/workstations.yml
+  FLEET_GITOPS_SOFTWARE_DIR: platforms/macos/software
+  FLEET_GITOPS_SCRIPTS_DIR: platforms/macos/scripts
+  FLEET_GITOPS_ICONS_DIR: platforms/all/icons
+  FLEET_GITOPS_POLICIES_DIR: platforms/macos/policies
+  FLEET_GITOPS_TEAM_YAML_PATH: fleets/workstations.yml
   s3_retention_versions: 0
 
 Process:
@@ -39,6 +42,9 @@ Process:
     post_install_script: "%POST_INSTALL_SCRIPT%"
     auto_update_policy_query: "%AUTOMATIC_UPDATE_POLICY_QUERY%"
     gitops_software_dir: "%FLEET_GITOPS_SOFTWARE_DIR%"
+    gitops_scripts_dir: "%FLEET_GITOPS_SCRIPTS_DIR%"
+    gitops_icons_dir: "%FLEET_GITOPS_ICONS_DIR%"
+    gitops_policies_dir: "%FLEET_GITOPS_POLICIES_DIR%"
     gitops_team_yaml_path: "%FLEET_GITOPS_TEAM_YAML_PATH%"
     fleet_api_base: "%FLEET_API_BASE%"
     fleet_api_token: "%FLEET_API_TOKEN%"
