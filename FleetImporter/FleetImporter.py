@@ -138,6 +138,14 @@ class FleetImporter(Processor):
             "required": False,
             "description": "Filesystem path to the GitHub App's private key in PEM format (chmod 600). The key is never logged and is passed to openssl via -sign. Use FLEET_GITOPS_GITHUB_APP_PRIVATE_KEY_PATH environment variable.",
         },
+        "github_app_bot_slug": {
+            "required": False,
+            "description": "The GitHub App's slug (the bot account login is '<slug>[bot]', e.g. 'autopkg' for 'autopkg[bot]'). Required when using GitHub App auth so the commit author label uses the correct bot name. Use FLEET_GITOPS_GITHUB_APP_BOT_SLUG environment variable.",
+        },
+        "github_app_bot_user_id": {
+            "required": False,
+            "description": "Numeric user ID of the App's bot account ('<slug>[bot]'). This is a DIFFERENT integer from the App ID — find it via https://api.github.com/users/<slug>%5Bbot%5D (response 'id' field) or the equivalent on your GitHub Enterprise host. Required when using GitHub App auth so commits link to the bot's GitHub profile via the noreply email format. Use FLEET_GITOPS_GITHUB_APP_BOT_USER_ID environment variable.",
+        },
         "s3_retention_versions": {
             "required": False,
             "default": 0,
@@ -989,6 +997,8 @@ class FleetImporter(Processor):
         # token is itself a Bearer credential the rest of the workflow can use
         # interchangeably with a PAT for both git HTTPS and the REST API.
         using_github_app = False
+        bot_slug = None
+        bot_user_id = None
         if have_app_creds:
             _, _, _, api_base = self._parse_github_repo_url(gitops_repo_url)
             self.output("Minting GitHub App installation token...")
@@ -999,10 +1009,30 @@ class FleetImporter(Processor):
                 github_app_private_key_path,
             )
             using_github_app = True
+
+            bot_slug = self.env.get("github_app_bot_slug")
+            bot_user_id_env = self.env.get("github_app_bot_user_id")
+            if not bot_slug or not bot_user_id_env:
+                raise ProcessorError(
+                    "GitHub App authentication requires github_app_bot_slug "
+                    "and github_app_bot_user_id. The bot login is "
+                    "'<slug>[bot]'; the user ID is a SEPARATE integer from "
+                    "the App ID. Both are required so commits link to the "
+                    "bot's GitHub profile via the noreply email format."
+                )
+            try:
+                bot_user_id = int(str(bot_user_id_env).strip())
+            except ValueError:
+                raise ProcessorError(
+                    "github_app_bot_user_id must be numeric, got: "
+                    f"{bot_user_id_env!r}"
+                )
+
             self.output(
                 f"Using GitHub App authentication (App ID {github_app_id}, "
-                f"installation {github_app_installation_id}) — PRs and commits "
-                "will be authored by the App's bot identity."
+                f"installation {github_app_installation_id}, bot "
+                f"{bot_slug}[bot] id={bot_user_id}) — PRs and commits will "
+                f"be authored by {bot_slug}[bot]."
             )
         else:
             self.output(
@@ -1093,7 +1123,7 @@ class FleetImporter(Processor):
             # push (which would fail with a non-fast-forward error against the
             # orphan branch). Mirror the "already exists in Fleet/S3" pattern.
             branch_name = f"autopkg/{self._slugify(software_title)}-{version}"
-            if self._remote_branch_exists(temp_dir, branch_name):
+            if self._remote_branch_exists(temp_dir, branch_name, github_token):
                 self.output(
                     f"Remote branch '{branch_name}' already exists — "
                     f"{software_title} {version} was previously imported."
@@ -1253,7 +1283,8 @@ class FleetImporter(Processor):
                 policy_yaml_path,
                 github_token=github_token,
                 using_github_app=using_github_app,
-                github_app_id=github_app_id,
+                bot_slug=bot_slug,
+                bot_user_id=bot_user_id,
             )
             self.env["git_branch"] = branch_name
 
@@ -2187,8 +2218,9 @@ class FleetImporter(Processor):
             ProcessorError: If clone fails
         """
         temp_dir = tempfile.mkdtemp(prefix="fleetimporter-gitops-")
-        askpass_script, git_env = self._make_git_auth_env(github_token)
+        askpass_script = None
         try:
+            askpass_script, git_env = self._make_git_auth_env(github_token)
             subprocess.run(
                 ["git", "clone", repo_url, temp_dir],
                 check=True,
@@ -2198,11 +2230,18 @@ class FleetImporter(Processor):
             )
             return temp_dir
         except subprocess.CalledProcessError as e:
-            if Path(temp_dir).exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(temp_dir, ignore_errors=True)
             raise ProcessorError(
                 f"Failed to clone GitOps repository: {e.stderr or e.stdout}"
             )
+        except BaseException:
+            # Any other failure between mkdtemp and the successful return —
+            # most plausibly mkstemp/os.write inside _make_git_auth_env —
+            # would otherwise orphan temp_dir, since the only narrow except
+            # above won't match. Clean up then re-raise so callers see the
+            # original exception unchanged.
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
         finally:
             if askpass_script and os.path.exists(askpass_script):
                 try:
@@ -2408,7 +2447,8 @@ class FleetImporter(Processor):
         policy_yaml_path: str = None,
         github_token: str = None,
         using_github_app: bool = False,
-        github_app_id: str = None,
+        bot_slug: str = None,
+        bot_user_id: int = None,
     ):
         """Create Git branch, commit changes, and push to remote.
 
@@ -2422,10 +2462,15 @@ class FleetImporter(Processor):
             icon_path: Optional relative path to icon file (e.g., ../../icons/claude.png)
             policy_yaml_path: Optional relative path to policy YAML file (e.g., lib/policies/chrome.yml)
             github_token: PAT or App installation access token used for the push.
-            using_github_app: When True, set commit author to the App bot so commits
-                aren't attributed to the host user.
-            github_app_id: App ID, used to construct the bot's noreply email when
-                using_github_app is True.
+            using_github_app: When True, attribute commits to the App bot using
+                ``bot_slug`` and ``bot_user_id`` so the commit author label
+                links to the bot's GitHub profile.
+            bot_slug: App slug (the bot login is ``<bot_slug>[bot]``). Required
+                when ``using_github_app`` is True.
+            bot_user_id: Numeric user ID of the ``<bot_slug>[bot]`` account.
+                Different from the App ID. Required when ``using_github_app``
+                is True so the noreply email links commits to the bot's
+                profile.
 
         Raises:
             ProcessorError: If Git operations fail
@@ -2457,13 +2502,18 @@ class FleetImporter(Processor):
             # commit to the App's bot account so `git log` doesn't show the
             # host user. PR author is set independently by whoever calls the
             # create-PR API, but commit author is what most reviewers look at.
+            # The noreply format <user_id>+<login>@users.noreply.github.com is
+            # what makes the commit author label link back to the bot's
+            # profile in GitHub's UI; both parts are caller-supplied since the
+            # bot user ID is distinct from the App ID and the slug is whatever
+            # the App owner chose.
             if using_github_app:
-                bot_name = "autopkg[bot]"
-                bot_email = (
-                    f"{github_app_id}+autopkg[bot]@users.noreply.github.com"
-                    if github_app_id
-                    else "autopkg[bot]@users.noreply.github.com"
-                )
+                if not bot_slug or bot_user_id is None:
+                    raise ProcessorError(
+                        "using_github_app=True requires bot_slug and " "bot_user_id"
+                    )
+                bot_name = f"{bot_slug}[bot]"
+                bot_email = f"{bot_user_id}+{bot_slug}[bot]@users.noreply.github.com"
                 subprocess.run(
                     ["git", "config", "user.name", bot_name],
                     cwd=repo_dir,
@@ -2704,32 +2754,45 @@ class FleetImporter(Processor):
         }
         return askpass_path, git_env
 
-    def _remote_branch_exists(self, repo_dir: str, branch_name: str) -> bool:
+    def _remote_branch_exists(
+        self, repo_dir: str, branch_name: str, github_token: str
+    ) -> bool:
         """Return True if ``branch_name`` exists on the ``origin`` remote.
 
         Used to keep the GitOps workflow idempotent: re-running a recipe for
         a version whose branch was already pushed must not blow up with a
         non-fast-forward push (see #70).
+
+        ``github_token`` must be threaded through (rather than relying on the
+        macOS credential helper having cached creds during the preceding
+        clone) so this works under GitHub App auth, where each run uses a
+        short-lived installation token the keychain has never seen. The
+        previous implicit-cache path also risked silently falling back to
+        the host user's PAT, which would defeat the bot-identity isolation.
         """
-        git_env = {
-            "GIT_TERMINAL_PROMPT": "0",
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": os.environ.get("HOME", ""),
-        }
-        # `--exit-code` returns 2 when no refs match, 0 on match.
-        result = subprocess.run(
-            [
-                "git",
-                "ls-remote",
-                "--exit-code",
-                "origin",
-                f"refs/heads/{branch_name}",
-            ],
-            cwd=repo_dir,
-            capture_output=True,
-            text=True,
-            env=git_env,
-        )
+        askpass_script = None
+        try:
+            askpass_script, git_env = self._make_git_auth_env(github_token)
+            # `--exit-code` returns 2 when no refs match, 0 on match.
+            result = subprocess.run(
+                [
+                    "git",
+                    "ls-remote",
+                    "--exit-code",
+                    "origin",
+                    f"refs/heads/{branch_name}",
+                ],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                env=git_env,
+            )
+        finally:
+            if askpass_script and os.path.exists(askpass_script):
+                try:
+                    os.unlink(askpass_script)
+                except Exception:
+                    pass  # Best effort cleanup
         if result.returncode == 0:
             return True
         if result.returncode == 2:
