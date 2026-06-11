@@ -59,7 +59,10 @@ FleetImporter recipes support the following variables. Configuration can be set 
 | `AWS_DEFAULT_REGION` | Not used | Required | `us-east-1` | AWS region for S3 operations |
 | **GitOps Repository** | | | | |
 | `FLEET_GITOPS_REPO_URL` | Not used | Required | - | Git repository URL for Fleet configuration |
-| `FLEET_GITOPS_GITHUB_TOKEN` | Not used | Required | - | GitHub token with permissions to push commits and open pull requests (see GitHub token permissions below) |
+| `FLEET_GITOPS_GITHUB_TOKEN` | Not used | Required *or* App auth | - | GitHub personal access token. Required unless the three `FLEET_GITOPS_GITHUB_APP_*` inputs below are set (see [GitHub authentication](#github-authentication)) |
+| `FLEET_GITOPS_GITHUB_APP_ID` | Not used | Required *or* PAT | - | GitHub App ID (numeric). When set alongside the installation ID and private key path, FleetImporter mints a short-lived installation token so PRs are authored by the App's bot identity instead of a human user |
+| `FLEET_GITOPS_GITHUB_APP_INSTALLATION_ID` | Not used | Required *or* PAT | - | GitHub App installation ID (numeric). Found at the URL of the App's installation on the org/repo |
+| `FLEET_GITOPS_GITHUB_APP_PRIVATE_KEY_PATH` | Not used | Required *or* PAT | - | Filesystem path to the GitHub App's private key in PEM format (chmod 600). Never logged; passed to `openssl` via `-sign` |
 | `FLEET_GITOPS_SOFTWARE_DIR` | Not used | Optional | `lib/macos/software` | Directory for software YAML files in GitOps repo |
 | `FLEET_GITOPS_TEAM_YAML_PATH` | Not used | Optional | `teams/workstations.yml` | Path to team YAML file in GitOps repo |
 | **Software Configuration** | | | | |
@@ -132,19 +135,49 @@ Upload packages to S3 and create GitOps pull requests for Fleet configuration ma
 
 ### Required configuration
 
-Set via AutoPkg preferences:
+Set via AutoPkg preferences. The S3/CloudFront/repo lines are always required; pick **one** of the two GitHub auth blocks below.
 
 ```bash
+# Always required
 defaults write com.github.autopkg AWS_S3_BUCKET "my-fleet-packages"
 defaults write com.github.autopkg AWS_CLOUDFRONT_DOMAIN "cdn.example.com"
 defaults write com.github.autopkg AWS_ACCESS_KEY_ID "your-access-key"
 defaults write com.github.autopkg AWS_SECRET_ACCESS_KEY "your-secret-key"
 defaults write com.github.autopkg AWS_DEFAULT_REGION "us-east-1"
 defaults write com.github.autopkg FLEET_GITOPS_REPO_URL "https://github.com/org/fleet-gitops.git"
+
+# Option A: GitHub App — PRs are authored by the App's bot
+defaults write com.github.autopkg FLEET_GITOPS_GITHUB_APP_ID "123456"
+defaults write com.github.autopkg FLEET_GITOPS_GITHUB_APP_INSTALLATION_ID "7890123"
+defaults write com.github.autopkg FLEET_GITOPS_GITHUB_APP_PRIVATE_KEY_PATH "/etc/autopkg/fleet-app.pem"
+
+# Option B: personal access token — PRs are authored by the PAT owner
 defaults write com.github.autopkg FLEET_GITOPS_GITHUB_TOKEN "your-github-token"
 ```
 
-### GitHub token permissions
+If both Option A and Option B are configured, **App auth wins**: FleetImporter mints an installation token and the PAT is ignored. On each run the processor logs which mode is active (`Using GitHub App authentication ...` or `Using PAT authentication ...`), and emits a `WARNING:` if only one or two of the three `FLEET_GITOPS_GITHUB_APP_*` inputs are set so the silent fallback to PAT is visible.
+
+### GitHub authentication
+
+FleetImporter supports two ways to authenticate against the GitOps repository for clone, push, and PR creation. **GitHub App auth is recommended** because PRs are authored by the App's bot identity (e.g., `autopkg[bot]`) rather than the human running AutoPkg.
+
+#### Option A: GitHub App
+
+1. **Create a GitHub App** on the GitHub instance hosting your GitOps repo (github.com or your GitHub Enterprise server). Permissions required:
+   - **Contents: Read and write**
+   - **Pull requests: Read and write**
+   - **Metadata: Read** (auto-included)
+2. **Install the App** on the org or specifically on your GitOps repository.
+3. **Generate a private key** (PEM format) from the App's settings page and place it on the AutoPkg runner with restrictive permissions:
+   ```bash
+   sudo install -m 600 -o root downloaded-key.pem /etc/autopkg/fleet-app.pem
+   ```
+4. **Record the App ID** (from the App's settings page) and the **Installation ID** (visible in the URL of the App's installation page, e.g., `.../installations/7890123`).
+5. **Configure AutoPkg** with the three values shown in Option A above.
+
+Requirements: `openssl` must be on `PATH` (default on macOS) — FleetImporter shells out to it to sign the JWT used to mint installation tokens.
+
+#### Option B: Personal access token
 
 `FLEET_GITOPS_GITHUB_TOKEN` must be able to create branches, push commits, and open pull requests in your GitOps repository.
 
@@ -156,6 +189,8 @@ defaults write com.github.autopkg FLEET_GITOPS_GITHUB_TOKEN "your-github-token"
 - **Classic personal access token:**
   - **`repo`** scope (for private repositories)
   - **`public_repo`** scope can be used if the GitOps repository is public
+
+PRs created via this path are authored by the user who owns the PAT.
 
 ### GitOps workflow
 
@@ -365,8 +400,11 @@ All bundle identifiers and versions are automatically escaped to prevent SQL inj
 **GitOps mode issues**
 - Verify AWS credentials are configured
 - Check S3 bucket permissions for upload/delete operations
-- Ensure GitHub token has the required permissions (`Contents: Read and write`, `Pull requests: Read and write` for fine-grained tokens)
+- Ensure your GitHub credential has the required permissions:
+  - **PAT:** `Contents: Read and write`, `Pull requests: Read and write` (fine-grained), or `repo` scope (classic)
+  - **GitHub App:** `Contents: Read and write`, `Pull requests: Read and write`, and the App must be installed on the GitOps repository
 - Verify GitOps repository URL and paths are correct
+- Look for the per-run auth-mode line in the output (`Using GitHub App authentication ...` or `Using PAT authentication ...`) to confirm which credential is being used. A `WARNING: Partial GitHub App configuration detected` line means one or two of the three `FLEET_GITOPS_GITHUB_APP_*` inputs are set but not all three — set all three (or none) to fix.
 
 **Package upload failures**
 - Check package file exists and is readable
