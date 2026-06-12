@@ -1073,24 +1073,41 @@ class FleetImporter(Processor):
                         "Could not extract icon from package. Skipping icon in GitOps."
                     )
 
+            # Calculate the local SHA-256 once, up front. We pass it to the
+            # S3 uploader so it gets stored as object metadata; future runs
+            # can then read the hash from a HEAD response instead of having
+            # to re-download the entire package.
+            self.output(f"Calculating SHA-256 hash from local file: {pkg_path.name}")
+            local_hash_sha256 = self._calculate_file_sha256(pkg_path)
+
             # Upload package to S3
             self.output(f"Uploading package to S3 bucket: {aws_s3_bucket}")
-            s3_key, package_was_uploaded = self._upload_to_s3(
-                aws_s3_bucket, software_title, version, pkg_path
+            s3_key, package_was_uploaded, s3_hash_sha256 = self._upload_to_s3(
+                aws_s3_bucket,
+                software_title,
+                version,
+                pkg_path,
+                local_sha256=local_hash_sha256,
             )
             self.output(f"Package in S3: {s3_key}")
 
-            # Calculate SHA-256 hash
-            # If package was uploaded, hash the local file
-            # If package already existed in S3, download and hash it to ensure accuracy
             if package_was_uploaded:
-                self.output(
-                    f"Calculating SHA-256 hash from local file: {pkg_path.name}"
-                )
-                hash_sha256 = self._calculate_file_sha256(pkg_path)
+                # We just wrote it; the local hash matches what's in S3.
+                hash_sha256 = local_hash_sha256
+            elif s3_hash_sha256:
+                # Existing object had sha256 stored as metadata at upload
+                # time — trust that over the local file in case the local
+                # build is non-deterministic but the S3 copy is what Fleet
+                # will download.
+                hash_sha256 = s3_hash_sha256
             else:
+                # Legacy object uploaded before metadata was stored. Fall
+                # back to downloading and hashing it so the YAML matches
+                # what Fleet will actually see.
                 self.output(
-                    "Package already exists in S3. Downloading to calculate accurate SHA-256 hash..."
+                    "Package already exists in S3 without sha256 metadata. "
+                    "Downloading once to calculate hash; future uploads will "
+                    "store the hash as metadata to avoid this."
                 )
                 hash_sha256 = self._calculate_s3_file_sha256(aws_s3_bucket, s3_key)
 
@@ -1893,8 +1910,13 @@ class FleetImporter(Processor):
             raise ProcessorError(f"Failed to create S3 client: {e}")
 
     def _upload_to_s3(
-        self, bucket: str, software_title: str, version: str, pkg_path: Path
-    ) -> tuple[str, bool]:
+        self,
+        bucket: str,
+        software_title: str,
+        version: str,
+        pkg_path: Path,
+        local_sha256: str | None = None,
+    ) -> tuple[str, bool, str | None]:
         """Upload package to S3 and return the S3 key.
 
         Args:
@@ -1902,11 +1924,17 @@ class FleetImporter(Processor):
             software_title: Software title for path construction
             version: Software version for path construction
             pkg_path: Path to the package file
+            local_sha256: Pre-computed SHA-256 of the local package, written
+                          to S3 object metadata so future runs can avoid
+                          re-downloading the package just to hash it.
 
         Returns:
-            Tuple of (S3 key, was_uploaded: bool)
+            Tuple of (S3 key, was_uploaded: bool, existing_sha256_or_none)
             - S3 key: path within bucket
             - was_uploaded: True if file was uploaded, False if it already existed
+            - existing_sha256_or_none: When the object already existed, the
+              sha256 read from S3 metadata if it was stored at upload time;
+              None if there is no stored metadata (legacy objects).
 
         Raises:
             ProcessorError: If upload fails
@@ -1934,27 +1962,36 @@ class FleetImporter(Processor):
                     )
                     # Continue to upload
                 else:
+                    existing_sha256 = (
+                        head_response.get("Metadata", {}).get("sha256") or None
+                    )
                     self.output(
                         f"Package {software_title} {version} already exists in S3 at {s3_key}. "
                         f"Skipping upload (size: {s3_size} bytes, ETag: {s3_etag})."
                     )
-                    return s3_key, False
+                    return s3_key, False, existing_sha256
             except ClientError as e:
                 if e.response["Error"]["Code"] == "404":
                     self.output("Package not found in S3, proceeding with upload")
                 else:
                     raise ProcessorError(f"S3 HEAD request failed: {e}")
 
-            # Upload file to S3
+            # Upload file to S3. Storing the SHA-256 in object metadata lets
+            # subsequent runs read it via HEAD instead of downloading the
+            # entire package.
+            extra_args: dict = {"ContentType": "application/octet-stream"}
+            if local_sha256:
+                extra_args["Metadata"] = {"sha256": local_sha256}
+
             self.output(f"Uploading to s3://{bucket}/{s3_key}")
             s3_client.upload_file(
                 str(pkg_path),
                 bucket,
                 s3_key,
-                ExtraArgs={"ContentType": "application/octet-stream"},
+                ExtraArgs=extra_args,
             )
             self.output(f"Upload complete: s3://{bucket}/{s3_key}")
-            return s3_key, True
+            return s3_key, True, local_sha256
 
         except NoCredentialsError:
             raise ProcessorError(
