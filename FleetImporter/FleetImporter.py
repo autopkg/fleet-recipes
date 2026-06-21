@@ -2067,25 +2067,43 @@ class FleetImporter(Processor):
                 return
 
             # Delete old versions
+            failed_keys: list[tuple[str, str]] = []
             for ver in versions_to_delete:
                 for key in versions[ver]:
                     self.output(f"Deleting old version from S3: {key}")
                     try:
                         s3_client.delete_object(Bucket=bucket, Key=key)
                     except ClientError as e:
-                        self.output(f"Warning: Failed to delete {key}: {e}")
+                        failed_keys.append((key, str(e)))
+                        self.output(f"ERROR: S3 cleanup failed to delete {key}: {e}")
 
-            self.output(
-                f"Cleanup complete. Kept versions: {versions_to_keep}, "
-                f"Deleted versions: {versions_to_delete}"
-            )
+            if failed_keys:
+                # Surface a single, scannable summary so users see partial
+                # cleanup failures even if individual lines scroll past.
+                self.output(
+                    f"ERROR: S3 cleanup completed with {len(failed_keys)} "
+                    f"failure(s). Old object(s) still in bucket may incur "
+                    f"storage costs and should be investigated: "
+                    f"{[k for k, _ in failed_keys]}"
+                )
+            else:
+                self.output(
+                    f"Cleanup complete. Kept versions: {versions_to_keep}, "
+                    f"Deleted versions: {versions_to_delete}"
+                )
 
         except ClientError as e:
-            # Log error but don't fail the entire workflow
-            self.output(f"Warning: S3 cleanup failed: {e}")
+            # Log error but don't fail the entire workflow. Use ERROR prefix
+            # so accumulating cleanup failures aren't lost in normal warnings.
+            self.output(
+                f"ERROR: S3 cleanup failed for {software_title}: {e}. "
+                "Old package versions may not have been pruned."
+            )
         except Exception as e:
-            # Log error but don't fail the entire workflow
-            self.output(f"Warning: S3 cleanup failed: {e}")
+            self.output(
+                f"ERROR: S3 cleanup failed for {software_title}: {e}. "
+                "Old package versions may not have been pruned."
+            )
 
     def _copy_icon_to_gitops_repo(
         self,
