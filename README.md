@@ -311,7 +311,7 @@ When `automatic_update` is set to `true`, FleetImporter:
    - Link to install package automatically on policy failure
    - Platform targeting (macOS only)
 
-3. **Creates policy YAML** (GitOps mode): Writes policy definition to `platforms/macos/policies/` 
+3. **Creates policy YAML** (GitOps mode): Writes a policy definition to `platforms/macos/policies/` (as a list, per Fleet's GitOps schema), references the package by its `hash_sha256` in `install_software`, and wires a `path:` reference to the policy into the same team YAML that defines the package (required for Fleet to honor the `install_software` automation)
 
 ### Policy naming
 

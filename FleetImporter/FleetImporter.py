@@ -507,6 +507,7 @@ class FleetImporter(Processor):
         software_title: str,
         version: str,
         pkg_path: str,
+        hash_sha256: str,
     ):
         """Create or update auto-update policy in GitOps repository.
 
@@ -517,11 +518,13 @@ class FleetImporter(Processor):
             software_title: Software title (used to reference the software package)
             version: Software version
             pkg_path: Path to package file for bundle ID extraction
+            hash_sha256: SHA-256 hash of the package (used to reference the
+                software package in install_software)
 
         Note:
-            In GitOps mode, the policy references software by name rather than ID.
-            Fleet will resolve the software_title to the appropriate software_title_id
-            when it processes the GitOps configuration.
+            In GitOps mode, the policy references the software package by its
+            SHA-256 hash. Fleet resolves the hash to the matching software
+            title when it processes the GitOps configuration.
         """
         # Build policy name
         policy_name = self._format_policy_name(software_title)
@@ -551,7 +554,9 @@ class FleetImporter(Processor):
         self.output(f"Auto-update policy query: {query}")
 
         # Create policy YAML structure
-        # In GitOps mode, reference software by name - Fleet will resolve to software_title_id
+        # In GitOps mode, reference the software package by its SHA-256 hash.
+        # Fleet's install_software requires one of package_path, app_store_id,
+        # hash_sha256, or fleet_maintained_app_slug (not a software title name).
         policy_yaml = {
             "name": policy_name,
             "query": query,
@@ -560,7 +565,7 @@ class FleetImporter(Processor):
             "platform": "darwin",
             "critical": False,
             "install_software": {
-                "name": software_title,
+                "hash_sha256": hash_sha256,
             },
         }
 
@@ -573,8 +578,11 @@ class FleetImporter(Processor):
         policy_filename = f"{slug}.yml"
         policy_path = policies_path / policy_filename
 
+        # Fleet expects a policy file referenced via `path:` to contain a list
+        # of policies ([]*spec.Policy), even when there's only one. Writing a
+        # bare object fails with: expected type []*spec.Policy but got object.
         self.output(f"Writing auto-update policy to: {policies_dir}/{policy_filename}")
-        self._write_yaml(policy_path, policy_yaml)
+        self._write_yaml(policy_path, [policy_yaml])
 
         # Return repo-relative path for Git operations
         return f"{policies_dir}/{policy_filename}"
@@ -1158,6 +1166,19 @@ class FleetImporter(Processor):
                         software_title,
                         version,
                         pkg_path,
+                        hash_sha256,
+                    )
+                    # Wire the policy into the same team YAML that references
+                    # the package. Fleet only honors the install_software
+                    # automation when the policy lives in the same team/fleet
+                    # that defines the software. policy_yaml_path is relative to
+                    # the repo root (e.g., platforms/macos/policies/chrome.yml);
+                    # the team YAML references it relative to itself (../...),
+                    # matching the convention used for package references.
+                    self._add_policy_to_team_yaml(
+                        team_yaml_path,
+                        f"../{policy_yaml_path}",
+                        software_title,
                     )
                 except Exception as e:
                     # Log warning but don't fail the entire workflow
@@ -2480,6 +2501,54 @@ class FleetImporter(Processor):
             packages_list.append(new_entry)
 
         data["software"]["packages"] = packages_list
+        self._write_yaml(team_yaml_path, data)
+
+    def _add_policy_to_team_yaml(
+        self,
+        team_yaml_path: Path,
+        policy_yaml_relative_path: str,
+        software_title: str,
+    ):
+        """Add an auto-update policy reference to the team/fleet YAML.
+
+        Fleet only honors the `install_software` policy automation when the
+        policy is defined in the same team/fleet that defines the software
+        package. This wires the generated policy file into the same team YAML
+        that references the package.
+
+        Args:
+            team_yaml_path: Path to team YAML file
+            policy_yaml_relative_path: Path to the policy YAML relative to the
+                team YAML (e.g., ../platforms/macos/policies/chrome.yml)
+            software_title: Software title (for logging)
+
+        Raises:
+            ProcessorError: If YAML update fails
+        """
+        data = self._read_yaml(team_yaml_path)
+
+        # Ensure policies section exists and is a list. Fleet parses a
+        # `path:`-referenced policies block as a list of references.
+        if not data.get("policies"):
+            data["policies"] = []
+
+        policies_list = data["policies"]
+
+        # Idempotent: skip if this policy file is already referenced, so
+        # per-version branch reruns don't create duplicate entries.
+        for entry in policies_list:
+            if (
+                isinstance(entry, dict)
+                and entry.get("path") == policy_yaml_relative_path
+            ):
+                self.output(
+                    f"Team YAML already references auto-update policy for {software_title}"
+                )
+                return
+
+        self.output(f"Adding auto-update policy reference for {software_title}")
+        policies_list.append({"path": policy_yaml_relative_path})
+        data["policies"] = policies_list
         self._write_yaml(team_yaml_path, data)
 
     def _commit_and_push(

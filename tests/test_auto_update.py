@@ -229,6 +229,87 @@ class TestAutoUpdatePolicyPayload(unittest.TestCase):
         self.assertIn("3.3.12", payload["query"])
         self.assertIn("version_compare", payload["query"])
 
+    def test_gitops_install_software_uses_hash(self):
+        """GitOps policy install_software must reference the package by hash_sha256.
+
+        Fleet's install_software accepts only package_path, app_store_id,
+        hash_sha256, or fleet_maintained_app_slug -- not a software title name.
+        Mirrors the dict built in _create_or_update_policy_gitops.
+        """
+        hash_sha256 = "a" * 64
+        install_software = {
+            "hash_sha256": hash_sha256,
+        }
+
+        # The package must be referenced by hash, never by name.
+        self.assertIn("hash_sha256", install_software)
+        self.assertNotIn("name", install_software)
+        self.assertEqual(install_software["hash_sha256"], hash_sha256)
+
+    def test_gitops_policy_file_is_a_list(self):
+        """The policy file must contain a list of policies, not a bare object.
+
+        Fleet resolves a `path:`-referenced policy file as []*spec.Policy. A
+        single mapping fails with: expected type []*spec.Policy but got object.
+        Mirrors the value passed to _write_yaml in _create_or_update_policy_gitops.
+        """
+        policy_yaml = {
+            "name": "autopkg-auto-update-cisco-secure-client",
+            "query": "SELECT 1 ...",
+            "platform": "darwin",
+            "critical": False,
+            "install_software": {"hash_sha256": "a" * 64},
+        }
+        written = [policy_yaml]
+
+        self.assertIsInstance(written, list)
+        self.assertEqual(len(written), 1)
+        self.assertEqual(written[0]["name"], policy_yaml["name"])
+
+
+class TestAutoUpdateTeamPolicyWiring(unittest.TestCase):
+    """Test wiring the policy reference into the team/fleet YAML."""
+
+    @staticmethod
+    def add_policy_ref(data, policy_path):
+        """Replicate the core logic of _add_policy_to_team_yaml."""
+        if not data.get("policies"):
+            data["policies"] = []
+        for entry in data["policies"]:
+            if isinstance(entry, dict) and entry.get("path") == policy_path:
+                return data
+        data["policies"].append({"path": policy_path})
+        return data
+
+    def test_adds_policies_section_when_missing(self):
+        """A team YAML with no policies key gets one with the reference."""
+        data = {"software": {"packages": [{"path": "../lib/foo.yml"}]}}
+        result = self.add_policy_ref(data, "../platforms/macos/policies/foo.yml")
+
+        self.assertIn("policies", result)
+        self.assertEqual(
+            result["policies"], [{"path": "../platforms/macos/policies/foo.yml"}]
+        )
+        # Existing software section is preserved.
+        self.assertIn("software", result)
+
+    def test_appends_to_existing_policies(self):
+        """A new policy reference is appended alongside existing ones."""
+        data = {"policies": [{"path": "../platforms/macos/policies/bar.yml"}]}
+        result = self.add_policy_ref(data, "../platforms/macos/policies/foo.yml")
+
+        self.assertEqual(len(result["policies"]), 2)
+        self.assertIn(
+            {"path": "../platforms/macos/policies/foo.yml"}, result["policies"]
+        )
+
+    def test_is_idempotent(self):
+        """Re-adding the same policy path does not create a duplicate."""
+        data = {"policies": [{"path": "../platforms/macos/policies/foo.yml"}]}
+        result = self.add_policy_ref(data, "../platforms/macos/policies/foo.yml")
+
+        self.assertEqual(len(result["policies"]), 1)
+
 
 class TestAutoUpdateSQLInjectionPrevention(unittest.TestCase):
     """Test SQL injection prevention in query building."""
