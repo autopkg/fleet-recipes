@@ -1093,17 +1093,31 @@ class FleetImporter(Processor):
             # hash won't match the newly-uploaded file.
             if package_was_reuploaded:
                 self.output("Invalidating CloudFront cache for re-uploaded package...")
-                distribution_id = self._lookup_cloudfront_distribution_id(aws_cloudfront_domain)
+                distribution_id = self._lookup_cloudfront_distribution_id(
+                    aws_cloudfront_domain
+                )
                 if distribution_id:
                     self._invalidate_cloudfront_path(distribution_id, s3_key)
                 else:
                     self.output("!" * 70)
-                    self.output("WARNING: Package was re-uploaded to S3 but the CloudFront")
-                    self.output(f"distribution for '{aws_cloudfront_domain}' could not be found.")
-                    self.output("CloudFront will likely serve the old cached file, causing")
-                    self.output("Fleet's GitOps job to fail with a hash mismatch error.")
-                    self.output("Ensure your AWS credentials have cloudfront:ListDistributions")
-                    self.output("permission and that the domain matches a distribution alias.")
+                    self.output(
+                        "WARNING: Package was re-uploaded to S3 but the CloudFront"
+                    )
+                    self.output(
+                        f"distribution for '{aws_cloudfront_domain}' could not be found."
+                    )
+                    self.output(
+                        "CloudFront will likely serve the old cached file, causing"
+                    )
+                    self.output(
+                        "Fleet's GitOps job to fail with a hash mismatch error."
+                    )
+                    self.output(
+                        "Ensure your AWS credentials have cloudfront:ListDistributions"
+                    )
+                    self.output(
+                        "permission and that the domain matches a distribution alias."
+                    )
                     self.output("!" * 70)
 
             # Calculate SHA-256 hash
