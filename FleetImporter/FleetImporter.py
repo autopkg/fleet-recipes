@@ -1083,10 +1083,28 @@ class FleetImporter(Processor):
 
             # Upload package to S3
             self.output(f"Uploading package to S3 bucket: {aws_s3_bucket}")
-            s3_key, package_was_uploaded = self._upload_to_s3(
+            s3_key, package_was_uploaded, package_was_reuploaded = self._upload_to_s3(
                 aws_s3_bucket, software_title, version, pkg_path
             )
             self.output(f"Package in S3: {s3_key}")
+
+            # Invalidate CloudFront cache when an existing S3 object was replaced,
+            # otherwise Fleet's GitOps will download a stale cached version whose
+            # hash won't match the newly-uploaded file.
+            if package_was_reuploaded:
+                self.output("Invalidating CloudFront cache for re-uploaded package...")
+                distribution_id = self._lookup_cloudfront_distribution_id(aws_cloudfront_domain)
+                if distribution_id:
+                    self._invalidate_cloudfront_path(distribution_id, s3_key)
+                else:
+                    self.output("!" * 70)
+                    self.output("WARNING: Package was re-uploaded to S3 but the CloudFront")
+                    self.output(f"distribution for '{aws_cloudfront_domain}' could not be found.")
+                    self.output("CloudFront will likely serve the old cached file, causing")
+                    self.output("Fleet's GitOps job to fail with a hash mismatch error.")
+                    self.output("Ensure your AWS credentials have cloudfront:ListDistributions")
+                    self.output("permission and that the domain matches a distribution alias.")
+                    self.output("!" * 70)
 
             # Calculate SHA-256 hash
             # If package was uploaded, hash the local file
@@ -1913,9 +1931,86 @@ class FleetImporter(Processor):
         except Exception as e:
             raise ProcessorError(f"Failed to create S3 client: {e}")
 
+    def _get_cloudfront_client(self):
+        """Get configured boto3 CloudFront client.
+
+        Returns:
+            boto3 CloudFront client
+
+        Raises:
+            ProcessorError: If boto3 is not available or credentials are missing
+        """
+        if boto3 is None:
+            raise ProcessorError(
+                "boto3 is required for CloudFront operations but could not be imported or installed. "
+                "Please install it manually: pip install boto3"
+            )
+
+        access_key, secret_key, region = self._get_aws_credentials()
+
+        try:
+            cf_client = boto3.client(
+                "cloudfront",
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region_name=region,
+            )
+            return cf_client
+        except Exception as e:
+            raise ProcessorError(f"Failed to create CloudFront client: {e}")
+
+    def _lookup_cloudfront_distribution_id(self, domain: str) -> str | None:
+        """Look up CloudFront distribution ID by matching domain or alias.
+
+        Args:
+            domain: CloudFront domain or custom alias to search for
+
+        Returns:
+            Distribution ID string, or None if not found or lookup fails
+        """
+        try:
+            cf_client = self._get_cloudfront_client()
+            domain = domain.rstrip(".")
+            paginator = cf_client.get_paginator("list_distributions")
+            for page in paginator.paginate():
+                for dist in page.get("DistributionList", {}).get("Items", []):
+                    if dist.get("DomainName", "").rstrip(".") == domain:
+                        return dist["Id"]
+                    for alias in dist.get("Aliases", {}).get("Items", []):
+                        if alias.rstrip(".") == domain:
+                            return dist["Id"]
+        except Exception as e:
+            self.output(f"Warning: CloudFront distribution lookup failed: {e}")
+        return None
+
+    def _invalidate_cloudfront_path(self, distribution_id: str, s3_key: str) -> None:
+        """Invalidate a CloudFront cache entry for the given S3 key.
+
+        Args:
+            distribution_id: CloudFront distribution ID
+            s3_key: S3 key to invalidate (will be prefixed with /)
+
+        Raises:
+            ProcessorError: If the invalidation request fails
+        """
+        cf_client = self._get_cloudfront_client()
+        path = f"/{s3_key}"
+        caller_reference = f"fleetimporter-{int(time.time())}"
+        try:
+            cf_client.create_invalidation(
+                DistributionId=distribution_id,
+                InvalidationBatch={
+                    "Paths": {"Quantity": 1, "Items": [path]},
+                    "CallerReference": caller_reference,
+                },
+            )
+            self.output(f"CloudFront cache invalidated for: {path}")
+        except Exception as e:
+            raise ProcessorError(f"CloudFront invalidation failed: {e}")
+
     def _upload_to_s3(
         self, bucket: str, software_title: str, version: str, pkg_path: Path
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, bool]:
         """Upload package to S3 and return the S3 key.
 
         Args:
@@ -1925,9 +2020,10 @@ class FleetImporter(Processor):
             pkg_path: Path to the package file
 
         Returns:
-            Tuple of (S3 key, was_uploaded: bool)
+            Tuple of (S3 key, was_uploaded: bool, was_reupload: bool)
             - S3 key: path within bucket
-            - was_uploaded: True if file was uploaded, False if it already existed
+            - was_uploaded: True if file was uploaded (new or re-upload), False if already existed
+            - was_reupload: True if an existing S3 object was replaced due to size mismatch
 
         Raises:
             ProcessorError: If upload fails
@@ -1939,6 +2035,8 @@ class FleetImporter(Processor):
             # Use AutoPkg standard naming: software/Title/Title-Version.pkg
             extension = pkg_path.suffix
             s3_key = f"software/{software_title}/{software_title}-{version}{extension}"
+
+            is_reupload = False
 
             # Check if package already exists in S3
             try:
@@ -1953,13 +2051,14 @@ class FleetImporter(Processor):
                         f"Warning: S3 package size ({s3_size} bytes) differs from local file ({local_size} bytes). "
                         f"Re-uploading package."
                     )
+                    is_reupload = True
                     # Continue to upload
                 else:
                     self.output(
                         f"Package {software_title} {version} already exists in S3 at {s3_key}. "
                         f"Skipping upload (size: {s3_size} bytes, ETag: {s3_etag})."
                     )
-                    return s3_key, False
+                    return s3_key, False, False
             except ClientError as e:
                 if e.response["Error"]["Code"] == "404":
                     self.output("Package not found in S3, proceeding with upload")
@@ -1975,7 +2074,7 @@ class FleetImporter(Processor):
                 ExtraArgs={"ContentType": "application/octet-stream"},
             )
             self.output(f"Upload complete: s3://{bucket}/{s3_key}")
-            return s3_key, True
+            return s3_key, True, is_reupload
 
         except NoCredentialsError:
             raise ProcessorError(
