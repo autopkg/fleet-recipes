@@ -131,7 +131,14 @@ Upload packages to S3 and create GitOps pull requests for Fleet configuration ma
 
 - AWS S3 bucket for package storage
 - CloudFront distribution pointing to the S3 bucket
-- AWS credentials with read/write access to the S3 bucket
+- AWS credentials with the following IAM permissions:
+  - `s3:HeadObject`
+  - `s3:PutObject`
+  - `s3:GetObject`
+  - `s3:ListObjectsV2`
+  - `s3:DeleteObject`
+  - `cloudfront:ListDistributions`
+  - `cloudfront:CreateInvalidation`
 
 ### Required configuration
 
@@ -146,6 +153,8 @@ defaults write com.github.autopkg AWS_DEFAULT_REGION "us-east-1"
 defaults write com.github.autopkg FLEET_GITOPS_REPO_URL "https://github.com/org/fleet-gitops.git"
 defaults write com.github.autopkg FLEET_GITOPS_GITHUB_TOKEN "your-github-token"
 ```
+
+When a package is re-uploaded to S3 (e.g. when the vendor publishes a corrected build under the same version number), FleetImporter automatically looks up the CloudFront distribution ID from `AWS_CLOUDFRONT_DOMAIN` and issues a cache invalidation. Without the CloudFront permissions above, a warning is emitted and Fleet's GitOps job may fail with a hash mismatch.
 
 ### GitHub token permissions
 
