@@ -376,11 +376,30 @@ jobs:
       run: |
         python tests/test_style_guide_compliance.py
 
+  validate-unit-tests:
+    name: Processor Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.13'
+
+    - name: Run unittest suite
+      run: |
+        python -m unittest -v \
+          tests.test_auto_update \
+          tests.test_inject_coercion
+
   validate-final:
     name: Final Validation Summary
     runs-on: ubuntu-latest
-    needs: [validate-python, validate-environment-variables, validate-recipe-structure, security-check, integration-test, validate-style-guide]
-    
+    needs: [validate-python, validate-environment-variables, validate-recipe-structure, security-check, integration-test, validate-style-guide, validate-unit-tests]
+
     steps:
     - name: Summary
       run: |
@@ -392,5 +411,6 @@ jobs:
         echo "✅ Security and best practices check"
         echo "✅ Integration test"
         echo "✅ Style guide compliance (includes YAML validation)"
+        echo "✅ Processor unit tests"
         echo ""
         echo "Ready for merge! 🚀"
