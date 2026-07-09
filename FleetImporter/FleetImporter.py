@@ -2108,9 +2108,44 @@ class FleetImporter(Processor):
 
         Returns:
             Full CloudFront HTTPS URL
+
+        Raises:
+            ProcessorError: If the domain is empty, contains an http:// scheme,
+                            or includes path/query components.
         """
-        # Remove any leading/trailing slashes from domain
-        domain = cloudfront_domain.strip("/")
+        if not cloudfront_domain or not cloudfront_domain.strip():
+            raise ProcessorError(
+                "aws_cloudfront_domain is empty. A CloudFront distribution "
+                "domain (e.g., d1234abcd.cloudfront.net or cdn.example.com) "
+                "is required for GitOps mode."
+            )
+
+        domain = cloudfront_domain.strip().strip("/")
+
+        # Reject explicit http:// — Fleet downloads must be HTTPS to avoid
+        # serving packages over an unauthenticated channel.
+        lower = domain.lower()
+        if lower.startswith("http://"):
+            raise ProcessorError(
+                f"aws_cloudfront_domain must be served over HTTPS, got: "
+                f"{cloudfront_domain!r}. Provide the domain only "
+                "(e.g., d1234abcd.cloudfront.net), not an http:// URL."
+            )
+        if lower.startswith("https://"):
+            domain = domain[8:]
+
+        # A bare domain has no path/query/fragment.
+        if any(ch in domain for ch in ("/", "?", "#")):
+            raise ProcessorError(
+                f"aws_cloudfront_domain must be a bare hostname (no path or "
+                f"query), got: {cloudfront_domain!r}."
+            )
+        if " " in domain or not domain:
+            raise ProcessorError(
+                f"aws_cloudfront_domain is not a valid hostname: "
+                f"{cloudfront_domain!r}."
+            )
+
         # Ensure s3_key doesn't start with /
         key = s3_key.lstrip("/")
         return f"https://{domain}/{key}"
