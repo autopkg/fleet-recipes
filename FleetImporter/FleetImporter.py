@@ -1918,7 +1918,7 @@ class FleetImporter(Processor):
         return access_key, secret_key, region
 
     def _get_s3_client(self):
-        """Get configured boto3 S3 client.
+        """Get configured boto3 S3 client, cached per processor instance.
 
         Returns:
             boto3 S3 client
@@ -1934,6 +1934,12 @@ class FleetImporter(Processor):
 
         access_key, secret_key, region = self._get_aws_credentials()
 
+        cached = getattr(self, "_cached_s3_client", None)
+        cached_key = getattr(self, "_cached_s3_client_key", None)
+        client_key = (access_key, region)
+        if cached is not None and cached_key == client_key:
+            return cached
+
         try:
             s3_client = boto3.client(
                 "s3",
@@ -1941,6 +1947,8 @@ class FleetImporter(Processor):
                 aws_secret_access_key=secret_key,
                 region_name=region,
             )
+            self._cached_s3_client = s3_client
+            self._cached_s3_client_key = client_key
             return s3_client
         except Exception as e:
             raise ProcessorError(f"Failed to create S3 client: {e}")
