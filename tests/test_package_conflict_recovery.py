@@ -84,7 +84,9 @@ class TestParseExistingTitleName(unittest.TestCase):
     def test_parses_name_without_team_name(self):
         # WithTeamName()/WithTeamID() aren't always called - the identifier
         # is still the first quoted segment immediately before "already exists".
-        body = self._fleet_error_body('SoftwareInstaller "Google Chrome.app" already exists.')
+        body = self._fleet_error_body(
+            'SoftwareInstaller "Google Chrome.app" already exists.'
+        )
         self.assertEqual(parse_existing_title_name(body), "Google Chrome.app")
 
     def test_parses_name_with_special_characters(self):
