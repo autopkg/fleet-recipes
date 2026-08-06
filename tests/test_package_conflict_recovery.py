@@ -11,6 +11,13 @@ FleetImporter recovers by parsing the existing title's name out of Fleet's
 error body and looking it up via the software/titles API, then replacing the
 installer with PATCH .../software/titles/:id/package instead of skipping.
 
+Fleet's error wording depends on which server-side check catches the
+conflict, so the parser (and these tests) cover both observed formats:
+  "Couldn't add software. <name> already has an installer available for
+   the <team> fleet." (the common case in the field, e.g. Fleet v4.89.2)
+  SoftwareInstaller "<name>" already exists with fleet "<team>". (a raw
+   unique-constraint-violation fallback)
+
 Tests cover:
 1. Parsing the software title name out of Fleet's 409 error body
 2. Selecting the exact-match title from a fuzzy `query` search's results
@@ -39,14 +46,29 @@ def parse_existing_title_name(error_body):
     We must json.loads() first to get the unescaped reason string before
     regexing it - regexing the raw JSON bytes directly would capture the
     literal backslash along with the name.
+
+    Fleet's wording depends on which server-side conflict check catches it,
+    so we try both known formats:
+      "Couldn't add software. google-chrome-stable already has an installer
+       available for the Workstations fleet." (checkSoftwareConflictsByIdentifier
+       - the common case, raised before any insert is attempted)
+      SoftwareInstaller "google-chrome-stable" already exists with fleet
+       "Team 1". (raw unique-constraint violation on insert - a fallback for
+       races the pre-check doesn't catch)
     """
     reason = error_body
     try:
         reason = json.loads(error_body).get("errors", [{}])[0].get("reason", error_body)
     except (json.JSONDecodeError, IndexError, AttributeError):
         pass
-    match = re.search(r'"([^"]+)"\s+already exists', reason)
-    return match.group(1) if match else None
+    for pattern in (
+        r"Couldn't add software\.\s+(.+?)\s+already has an installer available for",
+        r'"([^"]+)"\s+already exists',
+    ):
+        match = re.search(pattern, reason)
+        if match:
+            return match.group(1)
+    return None
 
 
 def find_exact_match_title_id(title_name, software_titles):
@@ -74,6 +96,46 @@ class TestParseExistingTitleName(unittest.TestCase):
                 "errors": [{"name": "base", "reason": reason}],
             }
         )
+
+    def test_parses_name_from_conflict_error_format(self):
+        # This is the format actually observed in the field (Fleet v4.89.2):
+        # checkSoftwareConflictsByIdentifier's pre-insert check, surfaced as
+        # {"message": "Conflict", ...} rather than {"message": "Resource
+        # Already Exists", ...}.
+        body = json.dumps(
+            {
+                "message": "Conflict",
+                "errors": [
+                    {
+                        "name": "base",
+                        "reason": (
+                            "Couldn't add software. google-chrome-stable "
+                            "already has an installer available for the "
+                            "Workstations fleet."
+                        ),
+                    }
+                ],
+            }
+        )
+        self.assertEqual(parse_existing_title_name(body), "google-chrome-stable")
+
+    def test_parses_name_from_conflict_error_format_with_multiword_team(self):
+        body = json.dumps(
+            {
+                "message": "Conflict",
+                "errors": [
+                    {
+                        "name": "base",
+                        "reason": (
+                            "Couldn't add software. Google Chrome.app already "
+                            "has an installer available for the IT Workstations "
+                            "fleet."
+                        ),
+                    }
+                ],
+            }
+        )
+        self.assertEqual(parse_existing_title_name(body), "Google Chrome.app")
 
     def test_parses_name_with_team_name(self):
         body = self._fleet_error_body(
