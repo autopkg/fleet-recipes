@@ -82,6 +82,7 @@ FleetImporter recipes support the following variables. Configuration can be set 
 | `AUTO_UPDATE_POLICY_NAME` | Optional | Optional | `autopkg-auto-update-%NAME%` | Policy name template (%NAME% replaced with slugified software title) |
 | **GitOps-Specific Options** | | | | |
 | `s3_retention_versions` | Not used | Optional | `0` | Number of old package versions to retain in S3 (0 = no pruning) |
+| `github_repo_base_branch` | Not used | Optional | `main` | Base branch of GitOps repository used as destination for pull requests. |
 
 ---
 
