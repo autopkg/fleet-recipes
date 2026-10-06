@@ -174,9 +174,9 @@ class StyleGuideValidator:
         if is_combined:
             self.validate_gitops_mode(recipe_path, input_section)
 
-        # Validate GitOps-specific paths (only for combined and legacy GitOps recipes)
+        # Validate AutoPkg inputs (only for combined and legacy GitOps recipes)
         if is_combined or is_legacy_gitops:
-            self.validate_gitops_paths(recipe_path, input_section)
+            self.validate_autopkg_inputs(recipe_path, input_section)
 
         # Validate categories requirement (when self_service is true)
         self.validate_categories_requirement(recipe_path, input_section)
@@ -510,8 +510,8 @@ class StyleGuideValidator:
         else:
             print(f"   ✅ Label Targeting: None (valid)")
 
-    def validate_gitops_paths(self, recipe_path, input_section):
-        """Validate the GitOps Input path variables match the expected layout."""
+    def validate_autopkg_inputs(self, recipe_path, input_section):
+        """Validate Autopkg Input variables to confirm they match the expected layout."""
         for var_name, expected in self.GITOPS_INPUT_PATHS.items():
             value = input_section.get(var_name)
             if value is None:

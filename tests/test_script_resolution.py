@@ -344,17 +344,18 @@ class TestDirectUploadScriptDelivery(unittest.TestCase):
 
 
 class TestGitopsPathFallback(unittest.TestCase):
-    """_gitops_path must fall back to the default for unset/empty values and
-    for AutoPkg %PLACEHOLDER% references that were left unsubstituted because
-    the recipe variable was undefined."""
+    """_validate_autopkg_input must fall back to the default for unset/empty
+    values and for AutoPkg %PLACEHOLDER% references that were left
+    unsubstituted because the recipe variable was undefined."""
 
-    # Mirrors the processor's GitOps path defaults.
+    # Mirrors the processor's GitOps defaults.
     DEFAULTS = {
         "gitops_software_dir": "platforms/macos/software",
         "gitops_scripts_dir": "platforms/macos/scripts",
         "gitops_icons_dir": "platforms/all/icons",
         "gitops_policies_dir": "platforms/macos/policies",
         "gitops_team_yaml_path": "fleets/workstations.yml",
+        "github_repo_base_branch": "main",
     }
 
     def setUp(self):
@@ -364,13 +365,13 @@ class TestGitopsPathFallback(unittest.TestCase):
     def test_uses_default_when_key_absent(self):
         for key, default in self.DEFAULTS.items():
             self.fi.env = {}
-            self.assertEqual(self.fi._gitops_path(key, default), default)
+            self.assertEqual(self.fi._validate_autopkg_input(key, default), default)
 
     def test_uses_default_when_empty_or_whitespace(self):
         for key, default in self.DEFAULTS.items():
             for blank in ("", "   "):
                 self.fi.env = {key: blank}
-                self.assertEqual(self.fi._gitops_path(key, default), default)
+                self.assertEqual(self.fi._validate_autopkg_input(key, default), default)
 
     def test_uses_default_when_placeholder_unsubstituted(self):
         # AutoPkg leaves "%VAR%" intact when VAR is undefined; treat as unset.
@@ -384,13 +385,14 @@ class TestGitopsPathFallback(unittest.TestCase):
         for key, placeholder in placeholders.items():
             self.fi.env = {key: placeholder}
             self.assertEqual(
-                self.fi._gitops_path(key, self.DEFAULTS[key]), self.DEFAULTS[key]
+                self.fi._validate_autopkg_input(key, self.DEFAULTS[key]),
+                self.DEFAULTS[key],
             )
 
     def test_honors_explicit_override(self):
         self.fi.env = {"gitops_scripts_dir": "custom/scripts"}
         self.assertEqual(
-            self.fi._gitops_path(
+            self.fi._validate_autopkg_input(
                 "gitops_scripts_dir", self.DEFAULTS["gitops_scripts_dir"]
             ),
             "custom/scripts",
@@ -400,7 +402,7 @@ class TestGitopsPathFallback(unittest.TestCase):
         # A real value that merely contains '%' (not a full %VAR% token) is kept.
         self.fi.env = {"gitops_scripts_dir": "platforms/macos/scripts%backup"}
         self.assertEqual(
-            self.fi._gitops_path(
+            self.fi._validate_autopkg_input(
                 "gitops_scripts_dir", self.DEFAULTS["gitops_scripts_dir"]
             ),
             "platforms/macos/scripts%backup",

@@ -141,6 +141,11 @@ class FleetImporter(Processor):
             "required": False,
             "description": "GitHub personal access token for cloning and creating PRs (required for GitOps mode). Use FLEET_GITOPS_GITHUB_TOKEN environment variable.",
         },
+        "github_repo_base_branch": {
+            "required": False,
+            "default": "main",
+            "description": "Base branch of GitOps repository used as destination for pull requests. If undefined, defaults to main.",
+        },
         "s3_retention_versions": {
             "required": False,
             "default": 0,
@@ -979,25 +984,30 @@ class FleetImporter(Processor):
         aws_s3_bucket = self.env.get("aws_s3_bucket")
         aws_cloudfront_domain = self.env.get("aws_cloudfront_domain")
         gitops_repo_url = self.env.get("gitops_repo_url")
-        gitops_software_dir = self._gitops_path(
+        gitops_software_dir = self._validate_autopkg_input(
             "gitops_software_dir", "platforms/macos/software"
         )
-        gitops_scripts_dir = self._gitops_path(
+        gitops_scripts_dir = self._validate_autopkg_input(
             "gitops_scripts_dir", "platforms/macos/scripts"
         )
-        gitops_icons_dir = self._gitops_path("gitops_icons_dir", "platforms/all/icons")
-        gitops_policies_dir = self._gitops_path(
+        gitops_icons_dir = self._validate_autopkg_input(
+            "gitops_icons_dir", "platforms/all/icons"
+        )
+        gitops_policies_dir = self._validate_autopkg_input(
             "gitops_policies_dir", "platforms/macos/policies"
         )
-        gitops_team_yaml_path = self._gitops_path(
+        gitops_team_yaml_path = self._validate_autopkg_input(
             "gitops_team_yaml_path", "fleets/workstations.yml"
+        )
+        github_repo_base_branch = self._validate_autopkg_input(
+            "github_repo_base_branch", "main"
         )
         github_token = self.env.get("github_token")
         s3_retention_versions = int(self.env.get("s3_retention_versions", 0))
 
-        # Validate required GitOps parameters. gitops_team_yaml_path is omitted
-        # here because it always resolves to a value (recipe Input or the
-        # default applied by _gitops_path).
+        # Validate required GitOps parameters. Parameters with default
+        # values are omitted here because they always resolve to a value
+        # (recipe Input or the default applied by _validate_autopkg_input).
         if not all(
             [
                 aws_s3_bucket,
@@ -1059,7 +1069,9 @@ class FleetImporter(Processor):
         temp_dir = None
         extracted_icon_path = None  # Track extracted icon for cleanup
         try:
-            temp_dir = self._clone_gitops_repo(gitops_repo_url, github_token)
+            temp_dir = self._clone_gitops_repo(
+                gitops_repo_url, github_token, github_repo_base_branch
+            )
             self.output(f"Repository cloned to: {temp_dir}")
 
             # Idempotency gate (see #70): if the per-version branch was already
@@ -1089,6 +1101,7 @@ class FleetImporter(Processor):
                         gitops_repo_url,
                         github_token,
                         branch_name,
+                        github_repo_base_branch,
                         software_title,
                         version,
                     )
@@ -1290,7 +1303,12 @@ class FleetImporter(Processor):
             # Create pull request
             self.output("Creating pull request...")
             pr_url = self._create_pull_request(
-                gitops_repo_url, github_token, branch_name, software_title, version
+                gitops_repo_url,
+                github_token,
+                branch_name,
+                github_repo_base_branch,
+                software_title,
+                version,
             )
             self.output(f"Pull request created: {pr_url}")
             self.env["pull_request_url"] = pr_url
@@ -1408,8 +1426,8 @@ class FleetImporter(Processor):
     # variable was undefined in the recipe/CLI/prefs/parent chain.
     _UNSUBSTITUTED_VAR = re.compile(r"^%[a-zA-Z_][a-zA-Z0-9_]*%$")
 
-    def _gitops_path(self, key: str, default: str) -> str:
-        """Resolve a GitOps path/dir input, falling back to the default.
+    def _validate_autopkg_input(self, key: str, default: str) -> str:
+        """Resolve an AutoPkg input, falling back to the default.
 
         Returns the default when the value is unset/empty or when AutoPkg left a
         "%PLACEHOLDER%" unsubstituted (which happens when the corresponding
@@ -2352,12 +2370,15 @@ class FleetImporter(Processor):
         ).as_posix()
         return yaml_relative_path, repo_relative_path
 
-    def _clone_gitops_repo(self, repo_url: str, github_token: str) -> str:
+    def _clone_gitops_repo(
+        self, repo_url: str, github_token: str, github_repo_base_branch: str
+    ) -> str:
         """Clone GitOps repository to a temporary directory.
 
         Args:
             repo_url: Git repository URL
             github_token: GitHub personal access token
+            github_repo_base_branch: Base branch of GitOps repository
 
         Returns:
             Path to temporary directory containing cloned repo
@@ -2388,7 +2409,14 @@ class FleetImporter(Processor):
 
             # Clone repository using GIT_ASKPASS for authentication
             subprocess.run(
-                ["git", "clone", repo_url, temp_dir],
+                [
+                    "git",
+                    "clone",
+                    "--branch",
+                    github_repo_base_branch,
+                    repo_url,
+                    temp_dir,
+                ],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -2924,6 +2952,7 @@ class FleetImporter(Processor):
         repo_url: str,
         github_token: str,
         branch_name: str,
+        github_repo_base_branch: str,
         software_title: str,
         version: str,
     ) -> str:
@@ -2933,6 +2962,7 @@ class FleetImporter(Processor):
             repo_url: Git repository URL
             github_token: GitHub personal access token
             branch_name: Name of branch to create PR from
+            github_repo_base_branch: Base branch of GitOps repository
             software_title: Software title for PR title
             version: Software version for PR title
 
@@ -2973,7 +3003,7 @@ This PR was automatically generated by the FleetImporter AutoPkg processor.
             "title": pr_title,
             "body": pr_body,
             "head": branch_name,
-            "base": "main",  # TODO: Make this configurable
+            "base": github_repo_base_branch,
         }
 
         try:
