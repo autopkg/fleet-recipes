@@ -46,6 +46,29 @@ FLEET_MINIMUM_VERSION = "4.74.0"
 FLEET_VERSION_TIMEOUT = 30
 FLEET_UPLOAD_TIMEOUT = 900  # 15 minutes for large packages
 
+# Matches an AutoPkg "%VARIABLE%" reference left unsubstituted because the
+# variable was undefined. Shared by _validate_autopkg_input and main()'s
+# direct-mode FLEET_API_* fallback.
+_UNSUBSTITUTED_VAR_RE = re.compile(r"^%[a-zA-Z_][a-zA-Z0-9_]*%$")
+
+
+def _is_unresolved_autopkg_value(value) -> bool:
+    """Whether an AutoPkg processor input needs fallback resolution.
+
+    True for missing/empty values (None, "", whitespace-only) and for
+    unsubstituted "%VAR%" placeholders. Non-string values (e.g. an int
+    team_id) count as explicitly set and are honored as-is so re.match
+    never sees a non-string.
+    """
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    if not stripped:
+        return True
+    return bool(_UNSUBSTITUTED_VAR_RE.match(stripped))
+
 
 class FleetImporter(Processor):
     """
@@ -598,11 +621,11 @@ class FleetImporter(Processor):
         if gitops_mode:
             self._run_gitops_workflow()
         else:
-            if not self.env.get("fleet_api_token"):
+            if _is_unresolved_autopkg_value(self.env.get("fleet_api_token")):
                 self.env["fleet_api_token"] = self.env.get("FLEET_API_TOKEN")
-            if not self.env.get("fleet_api_base"):
+            if _is_unresolved_autopkg_value(self.env.get("fleet_api_base")):
                 self.env["fleet_api_base"] = self.env.get("FLEET_API_BASE")
-            if not self.env.get("team_id"):
+            if _is_unresolved_autopkg_value(self.env.get("team_id")):
                 self.env["team_id"] = self.env.get("FLEET_TEAM_ID")
             self._run_direct_upload_workflow()
 
