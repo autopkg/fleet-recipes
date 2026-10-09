@@ -595,10 +595,15 @@ class FleetImporter(Processor):
     def main(self):
         # Check if GitOps mode is enabled
         gitops_mode = bool(self.env.get("gitops_mode", False))
-
         if gitops_mode:
             self._run_gitops_workflow()
         else:
+            if not self.env.get("fleet_api_token"):
+                self.env["fleet_api_token"] = self.env.get("FLEET_API_TOKEN")
+            if not self.env.get("fleet_api_base"):
+                self.env["fleet_api_base"] = self.env.get("FLEET_API_BASE")
+            if not self.env.get("team_id"):
+                self.env["team_id"] = self.env.get("FLEET_TEAM_ID")
             self._run_direct_upload_workflow()
 
     def _run_direct_upload_workflow(self):
