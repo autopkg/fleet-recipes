@@ -2,8 +2,8 @@
 """
 Regression tests for direct-mode variable insertion in FleetImporter.main.
 
-Covers the fallback introduced in 28221b8 plus the uncommitted
-`%PLACEHOLDER%` handling:
+Covers the fallback introduced in 28221b8 plus the `%PLACEHOLDER%`
+handling:
 
   fleet_api_token <- FLEET_API_TOKEN
   fleet_api_base  <- FLEET_API_BASE

@@ -1450,10 +1450,6 @@ class FleetImporter(Processor):
         # Otherwise it's a short inline one-liner script/query.
         return value
 
-    # Matches an AutoPkg "%VARIABLE%" reference left unsubstituted because the
-    # variable was undefined in the recipe/CLI/prefs/parent chain.
-    _UNSUBSTITUTED_VAR = re.compile(r"^%[a-zA-Z_][a-zA-Z0-9_]*%$")
-
     def _validate_autopkg_input(self, key: str, default: str) -> str:
         """Resolve an AutoPkg input, falling back to the default.
 
@@ -1473,7 +1469,7 @@ class FleetImporter(Processor):
             The configured path, or the default.
         """
         value = (self.env.get(key) or "").strip()
-        if not value or self._UNSUBSTITUTED_VAR.match(value):
+        if not value or _UNSUBSTITUTED_VAR_RE.match(value):
             return default
         return value
 
