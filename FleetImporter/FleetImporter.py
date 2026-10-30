@@ -46,6 +46,29 @@ FLEET_MINIMUM_VERSION = "4.74.0"
 FLEET_VERSION_TIMEOUT = 30
 FLEET_UPLOAD_TIMEOUT = 900  # 15 minutes for large packages
 
+# Matches an AutoPkg "%VARIABLE%" reference left unsubstituted because the
+# variable was undefined. Shared by _validate_autopkg_input and main()'s
+# direct-mode FLEET_API_* fallback.
+_UNSUBSTITUTED_VAR_RE = re.compile(r"^%[a-zA-Z_][a-zA-Z0-9_]*%$")
+
+
+def _is_unresolved_autopkg_value(value) -> bool:
+    """Whether an AutoPkg processor input needs fallback resolution.
+
+    True for missing/empty values (None, "", whitespace-only) and for
+    unsubstituted "%VAR%" placeholders. Non-string values (e.g. an int
+    team_id) count as explicitly set and are honored as-is so re.match
+    never sees a non-string.
+    """
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    if not stripped:
+        return True
+    return bool(_UNSUBSTITUTED_VAR_RE.match(stripped))
+
 
 class FleetImporter(Processor):
     """
@@ -595,10 +618,15 @@ class FleetImporter(Processor):
     def main(self):
         # Check if GitOps mode is enabled
         gitops_mode = bool(self.env.get("gitops_mode", False))
-
         if gitops_mode:
             self._run_gitops_workflow()
         else:
+            if _is_unresolved_autopkg_value(self.env.get("fleet_api_token")):
+                self.env["fleet_api_token"] = self.env.get("FLEET_API_TOKEN")
+            if _is_unresolved_autopkg_value(self.env.get("fleet_api_base")):
+                self.env["fleet_api_base"] = self.env.get("FLEET_API_BASE")
+            if _is_unresolved_autopkg_value(self.env.get("team_id")):
+                self.env["team_id"] = self.env.get("FLEET_TEAM_ID")
             self._run_direct_upload_workflow()
 
     def _run_direct_upload_workflow(self):
@@ -1422,10 +1450,6 @@ class FleetImporter(Processor):
         # Otherwise it's a short inline one-liner script/query.
         return value
 
-    # Matches an AutoPkg "%VARIABLE%" reference left unsubstituted because the
-    # variable was undefined in the recipe/CLI/prefs/parent chain.
-    _UNSUBSTITUTED_VAR = re.compile(r"^%[a-zA-Z_][a-zA-Z0-9_]*%$")
-
     def _validate_autopkg_input(self, key: str, default: str) -> str:
         """Resolve an AutoPkg input, falling back to the default.
 
@@ -1445,7 +1469,7 @@ class FleetImporter(Processor):
             The configured path, or the default.
         """
         value = (self.env.get(key) or "").strip()
-        if not value or self._UNSUBSTITUTED_VAR.match(value):
+        if not value or _UNSUBSTITUTED_VAR_RE.match(value):
             return default
         return value
 
