@@ -189,7 +189,8 @@ class TestBuildRunSummary(unittest.TestCase):
             summary["data"]["pull_request_url"], "https://github.com/org/repo/pull/7"
         )
         self.assertEqual(
-            summary["data"]["cloudfront_url"], "https://cdn.example.com/Island-1.2.3.pkg"
+            summary["data"]["cloudfront_url"],
+            "https://cdn.example.com/Island-1.2.3.pkg",
         )
         self.assertEqual(summary["data"]["gitops_mode"], "True")
 
