@@ -62,8 +62,8 @@ BASE_REPORT_FIELDS = [
     "icon",
     "gitops_mode",
 ]
-# Appended only in direct mode (populated from the Fleet API response).
-DIRECT_ONLY_FIELDS = ["title_id", "installer_id"]
+# Appended only in direct mode (API response IDs + the Fleet instance URL).
+DIRECT_ONLY_FIELDS = ["title_id", "installer_id", "fleet_instance"]
 # Appended only in GitOps mode (populated from S3/Git artifacts).
 GITOPS_ONLY_FIELDS = ["git_branch", "pull_request_url", "cloudfront_url"]
 SUMMARY_TEXT = "The following new items were imported into Fleet:"
@@ -83,6 +83,7 @@ class TestBuildRunSummary(unittest.TestCase):
             "icon": "island.png",
             "fleet_title_id": 42,
             "fleet_installer_id": 100,
+            "fleet_api_base": "https://fleet.example.com",
         }
 
     def _summary(self):
@@ -107,9 +108,10 @@ class TestBuildRunSummary(unittest.TestCase):
                 "pkg_sha256": "abc123",
                 "categories": "Productivity,Developer Tools",
                 "icon": "island.png",
-                "gitops_mode": False,
+                "gitops_mode": "False",
                 "title_id": "42",
                 "installer_id": "100",
+                "fleet_instance": "https://fleet.example.com",
             },
         )
 
@@ -155,6 +157,12 @@ class TestBuildRunSummary(unittest.TestCase):
         self.fi._build_run_summary()
         self.assertEqual(self._summary(), summary_with_false)
 
+    def test_fleet_instance_defaults_to_empty_string(self):
+        """Missing fleet_api_base reports an empty fleet_instance."""
+        self.fi.env.pop("fleet_api_base")
+        self.fi._build_run_summary()
+        self.assertEqual(self._summary()["data"]["fleet_instance"], "")
+
     # --- State hygiene ----------------------------------------------------
 
     def test_clears_preexisting_summary(self):
@@ -183,7 +191,7 @@ class TestBuildRunSummary(unittest.TestCase):
         self.assertEqual(
             summary["data"]["cloudfront_url"], "https://cdn.example.com/Island-1.2.3.pkg"
         )
-        self.assertEqual(summary["data"]["gitops_mode"], True)
+        self.assertEqual(summary["data"]["gitops_mode"], "True")
 
     def test_gitops_mode_defaults_to_empty_strings(self):
         """Missing git_branch/pull_request_url/cloudfront_url become empty strings."""

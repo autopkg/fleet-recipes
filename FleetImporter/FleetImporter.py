@@ -653,7 +653,7 @@ class FleetImporter(Processor):
             ],
             "data": {
                 "name": self.env.get("display_name", ""),
-                "version": self.env["version"],
+                "version": self.env.get("version", ""),
                 "pkg_name": self.env["pkg_path"],
                 "pkg_sha256": self.env["hash_sha256"],
                 "categories": ",".join(self.env.get("categories", [])),
@@ -671,8 +671,10 @@ class FleetImporter(Processor):
         else:
             summary["report_fields"].append("title_id")
             summary["report_fields"].append("installer_id")
+            summary["report_fields"].append("fleet_instance")
             summary["data"]["title_id"] = str(self.env.get("fleet_title_id", ""))
             summary["data"]["installer_id"] = str(self.env.get("fleet_installer_id", ""))
+            summary["data"]["fleet_instance"] = self.env.get("fleet_api_base", "")
 
         self.env["fleet_importer_summary_result"] = summary
 
