@@ -279,7 +279,7 @@ class FleetImporter(Processor):
         },
         "fleet_importer_summary_result": {
             "description": "Summary of the FleetImporter run."
-        }
+        },
     }
 
     def _get_ssl_context(self):
@@ -673,7 +673,9 @@ class FleetImporter(Processor):
             summary["report_fields"].append("installer_id")
             summary["report_fields"].append("fleet_instance")
             summary["data"]["title_id"] = str(self.env.get("fleet_title_id", ""))
-            summary["data"]["installer_id"] = str(self.env.get("fleet_installer_id", ""))
+            summary["data"]["installer_id"] = str(
+                self.env.get("fleet_installer_id", "")
+            )
             summary["data"]["fleet_instance"] = self.env.get("fleet_api_base", "")
 
         self.env["fleet_importer_summary_result"] = summary
