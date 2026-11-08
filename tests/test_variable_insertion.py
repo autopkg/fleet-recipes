@@ -65,6 +65,7 @@ class TestDirectModeVariableInsertion(unittest.TestCase):
         self.called = {}
         self.fi._run_direct_upload_workflow = lambda: self.called.update(direct=True)
         self.fi._run_gitops_workflow = lambda: self.called.update(gitops=True)
+        self.fi._build_run_summary = lambda: None
 
     def _run_main(self, env):
         self.fi.env = dict(env)
