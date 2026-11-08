@@ -277,6 +277,9 @@ class FleetImporter(Processor):
         "git_branch": {
             "description": "Name of the Git branch created for the PR (GitOps mode only)."
         },
+        "fleet_importer_summary_result": {
+            "description": "Summary of the FleetImporter run."
+        }
     }
 
     def _get_ssl_context(self):
@@ -628,6 +631,50 @@ class FleetImporter(Processor):
             if _is_unresolved_autopkg_value(self.env.get("team_id")):
                 self.env["team_id"] = self.env.get("FLEET_TEAM_ID")
             self._run_direct_upload_workflow()
+
+        self._build_run_summary()
+
+    def _build_run_summary(self):
+        # clear any pre-existing summary result
+        if "fleet_importer_summary_result" in self.env:
+            del self.env["fleet_importer_summary_result"]
+
+        gitops_mode = bool(self.env.get("gitops_mode", False))
+        summary = {
+            "summary_text": "The following new items were imported into Fleet:",
+            "report_fields": [
+                "name",
+                "version",
+                "pkg_name",
+                "pkg_sha256",
+                "categories",
+                "icon",
+                "gitops_mode",
+            ],
+            "data": {
+                "name": self.env.get("display_name", ""),
+                "version": self.env["version"],
+                "pkg_name": self.env["pkg_path"],
+                "pkg_sha256": self.env["hash_sha256"],
+                "categories": ",".join(self.env.get("categories", [])),
+                "icon": self.env.get("icon", ""),
+                "gitops_mode": str(gitops_mode),
+            },
+        }
+        if gitops_mode:
+            summary["report_fields"].append("git_branch")
+            summary["report_fields"].append("pull_request_url")
+            summary["report_fields"].append("cloudfront_url")
+            summary["data"]["git_branch"] = self.env.get("git_branch", "")
+            summary["data"]["pull_request_url"] = self.env.get("pull_request_url", "")
+            summary["data"]["cloudfront_url"] = self.env.get("cloudfront_url", "")
+        else:
+            summary["report_fields"].append("title_id")
+            summary["report_fields"].append("installer_id")
+            summary["data"]["title_id"] = str(self.env.get("fleet_title_id", ""))
+            summary["data"]["installer_id"] = str(self.env.get("fleet_installer_id", ""))
+
+        self.env["fleet_importer_summary_result"] = summary
 
     def _run_direct_upload_workflow(self):
         """Run the original direct upload workflow to Fleet API."""
