@@ -278,7 +278,7 @@ class FleetImporter(Processor):
             "description": "Name of the Git branch created for the PR (GitOps mode only)."
         },
         "fleet_importer_summary_result": {
-            "description": "Summary of the FleetImporter run."
+            "description": "Summary of the FleetImporter run. This variable is ingested by AutoPkg's own `summary_results`, and outputted into the PLIST report created when running AutoPkg with `--report-plist`. Note that it will only contain contents if a package is changed on the Fleet instance, and will otherwise be empty."
         },
     }
 
@@ -621,6 +621,7 @@ class FleetImporter(Processor):
     def main(self):
         # Check if GitOps mode is enabled
         gitops_mode = bool(self.env.get("gitops_mode", False))
+        self._import_occurred = False
         if gitops_mode:
             self._run_gitops_workflow()
         else:
@@ -632,7 +633,12 @@ class FleetImporter(Processor):
                 self.env["team_id"] = self.env.get("FLEET_TEAM_ID")
             self._run_direct_upload_workflow()
 
-        self._build_run_summary()
+        # Only report a summary when something was actually imported; skip
+        # it on "nothing changed" paths (package/branch already exists,
+        # etc.) so consumers of fleet_importer_summary_result (e.g. a
+        # post-run webhook) don't see false "new items imported" reports.
+        if self._import_occurred:
+            self._build_run_summary()
 
     def _build_run_summary(self):
         # clear any pre-existing summary result
@@ -648,16 +654,14 @@ class FleetImporter(Processor):
                 "pkg_name",
                 "pkg_sha256",
                 "categories",
-                "icon",
                 "gitops_mode",
             ],
             "data": {
                 "name": self.env.get("display_name", ""),
                 "version": self.env.get("version", ""),
-                "pkg_name": self.env["pkg_path"],
-                "pkg_sha256": self.env["hash_sha256"],
+                "pkg_name": Path(self.env["pkg_path"]).name,
+                "pkg_sha256": self.env.get("hash_sha256", ""),
                 "categories": ",".join(self.env.get("categories", [])),
-                "icon": self.env.get("icon", ""),
                 "gitops_mode": str(gitops_mode),
             },
         }
@@ -915,6 +919,8 @@ class FleetImporter(Processor):
                 return
         else:
             software_package = upload_info.get("software_package", {})
+
+        self._import_occurred = True
 
         # Extract upload results
         title_id = software_package.get("title_id")
@@ -1391,6 +1397,7 @@ class FleetImporter(Processor):
             )
             self.output(f"Pull request created: {pr_url}")
             self.env["pull_request_url"] = pr_url
+            self._import_occurred = True
 
         except Exception as e:
             # If we have a CloudFront URL, log it so it can be manually added

@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 """
-Unit tests for FleetImporter._build_run_summary().
+Unit tests for FleetImporter._build_run_summary() and the main() gating that
+decides when it runs.
 
-This method builds the AutoPkg summary result ("fleet_importer_summary_result")
-that appears at the end of every run, so regressions here are visible to every
-recipe consumer. It previously crashed with a TypeError in GitOps mode by
-indexing the report_fields *list* as if it were a dict
-("report_fields"]["data"]["git_branch"]), which took down every GitOps run at
-the summary step.
+fleet_importer_summary_result is picked up by AutoPkg's summary_results and
+included in the --report-plist output, so regressions here are visible to
+every recipe consumer (e.g. a post-run webhook). Beyond the structure of the
+summary itself, these tests cover:
 
-Unlike the other test modules, these import the real FleetImporter so the actual
-implementation is exercised; AutoPkg is stubbed so it can run without AutoPkg
-installed.
+  - env states _build_run_summary() must survive without raising, notably
+    hash_sha256 being absent (the state left behind by every "nothing was
+    imported" early return in the direct and GitOps workflows).
+  - the main() paths where a summary must NOT be built at all: the
+    direct-mode "package already exists" / "could not resolve existing
+    title" / "failed to replace installer" early returns, and the GitOps
+    "branch already exists" early return.
+  - one real run through main() per mode confirming the summary IS built,
+    and with the right data, when an import genuinely happens.
+
+Unlike the other test modules, these import the real FleetImporter so the
+actual implementation is exercised; AutoPkg is stubbed so it can run without
+AutoPkg installed.
 """
 
 import os
@@ -59,7 +68,6 @@ BASE_REPORT_FIELDS = [
     "pkg_name",
     "pkg_sha256",
     "categories",
-    "icon",
     "gitops_mode",
 ]
 # Appended only in direct mode (API response IDs + the Fleet instance URL).
@@ -80,7 +88,6 @@ class TestBuildRunSummary(unittest.TestCase):
             "pkg_path": "/path/to/Island-1.2.3.pkg",
             "hash_sha256": "abc123",
             "categories": ["Productivity", "Developer Tools"],
-            "icon": "island.png",
             "fleet_title_id": 42,
             "fleet_installer_id": 100,
             "fleet_api_base": "https://fleet.example.com",
@@ -104,16 +111,21 @@ class TestBuildRunSummary(unittest.TestCase):
             {
                 "name": "Island",
                 "version": "1.2.3",
-                "pkg_name": "/path/to/Island-1.2.3.pkg",
+                "pkg_name": "Island-1.2.3.pkg",
                 "pkg_sha256": "abc123",
                 "categories": "Productivity,Developer Tools",
-                "icon": "island.png",
                 "gitops_mode": "False",
                 "title_id": "42",
                 "installer_id": "100",
                 "fleet_instance": "https://fleet.example.com",
             },
         )
+
+    def test_pkg_name_uses_basename_not_full_path(self):
+        """pkg_name must not leak the local cache path into the report."""
+        self.fi.env["pkg_path"] = "/Users/example/Library/AutoPkg/Cache/foo/Island-1.2.3.pkg"
+        self.fi._build_run_summary()
+        self.assertEqual(self._summary()["data"]["pkg_name"], "Island-1.2.3.pkg")
 
     def test_report_fields_data_have_matching_keys(self):
         """Every value in report_fields has a corresponding entry in data."""
@@ -141,11 +153,23 @@ class TestBuildRunSummary(unittest.TestCase):
 
     def test_optional_fields_default_to_empty_string(self):
         self.fi.env["display_name"] = ""
-        self.fi.env["icon"] = ""
         self.fi._build_run_summary()
         data = self._summary()["data"]
         self.assertEqual(data["name"], "")
-        self.assertEqual(data["icon"], "")
+
+    def test_missing_hash_sha256_does_not_raise(self):
+        """hash_sha256 absent must not KeyError.
+
+        This is the env state left behind by every direct-mode early return
+        where nothing was actually imported (package already exists, could
+        not resolve the existing title, failed to replace the installer):
+        none of them set hash_sha256. _build_run_summary() itself must
+        tolerate that even though, with the main() gating in place, it is
+        no longer called on those paths.
+        """
+        self.fi.env.pop("hash_sha256")
+        self.fi._build_run_summary()
+        self.assertEqual(self._summary()["data"]["pkg_sha256"], "")
 
     def test_gitops_mode_absent_equals_false(self):
         """Omitting gitops_mode behaves the same as setting it false."""
@@ -221,6 +245,125 @@ class TestBuildRunSummary(unittest.TestCase):
         for field in GITOPS_ONLY_FIELDS:
             self.assertNotIn(field, summary["report_fields"])
             self.assertNotIn(field, summary["data"])
+
+
+class TestMainSummaryGating(unittest.TestCase):
+    """Integration tests through FleetImporter.main().
+
+    Unlike test_variable_insertion.py, _build_run_summary is NOT stubbed
+    here: these tests exercise the real main() -> _build_run_summary
+    integration, for both the "nothing imported" early-return states and a
+    genuine import in each mode. The workflow methods themselves are
+    stubbed (as in test_variable_insertion.py) purely to avoid touching the
+    network/filesystem/Fleet API; each stub reproduces exactly the env
+    mutations the real workflow leaves behind on that path.
+    """
+
+    def setUp(self):
+        self.fi = FleetImporter.FleetImporter()
+        self.fi.env = {
+            "display_name": "Island",
+            "version": "1.2.3",
+            "pkg_path": "/path/to/Island-1.2.3.pkg",
+            "categories": ["Productivity"],
+            "fleet_api_base": "https://fleet.example.com",
+        }
+
+    def _summary(self):
+        return self.fi.env.get("fleet_importer_summary_result")
+
+    # --- Direct mode: nothing imported, no summary -------------------------
+
+    def test_existing_package_in_fleet_skips_summary(self):
+        """'Package already exists in Fleet' return never sets hash_sha256."""
+
+        def fake_direct():
+            self.fi.env["fleet_title_id"] = 42
+            self.fi.env["fleet_installer_id"] = None
+
+        self.fi.env["gitops_mode"] = False
+        self.fi._run_direct_upload_workflow = fake_direct
+        self.fi.main()
+        self.assertIsNone(self._summary())
+
+    def test_could_not_resolve_existing_title_skips_summary(self):
+        """'Could not resolve the existing software title' return."""
+
+        def fake_direct():
+            self.fi.env["fleet_title_id"] = None
+            self.fi.env["fleet_installer_id"] = None
+
+        self.fi.env["gitops_mode"] = False
+        self.fi._run_direct_upload_workflow = fake_direct
+        self.fi.main()
+        self.assertIsNone(self._summary())
+
+    def test_installer_replace_failure_skips_summary(self):
+        """'Failed to replace the existing installer' return."""
+
+        def fake_direct():
+            self.fi.env["fleet_title_id"] = 42
+            self.fi.env["fleet_installer_id"] = None
+
+        self.fi.env["gitops_mode"] = False
+        self.fi._run_direct_upload_workflow = fake_direct
+        self.fi.main()
+        self.assertIsNone(self._summary())
+
+    # --- Direct mode: genuine import builds the summary ---------------------
+
+    def test_successful_direct_upload_builds_summary(self):
+        def fake_direct():
+            self.fi.env["fleet_title_id"] = 42
+            self.fi.env["fleet_installer_id"] = 100
+            self.fi.env["hash_sha256"] = "abc123"
+            self.fi._import_occurred = True
+
+        self.fi.env["gitops_mode"] = False
+        self.fi._run_direct_upload_workflow = fake_direct
+        self.fi.main()
+        summary = self._summary()
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary["data"]["pkg_sha256"], "abc123")
+        self.assertEqual(summary["data"]["title_id"], "42")
+        self.assertEqual(summary["data"]["installer_id"], "100")
+
+    # --- GitOps mode: nothing imported, no summary --------------------------
+
+    def test_gitops_idempotent_branch_skips_summary(self):
+        """Branch/PR already exists for this version: hash_sha256 never set."""
+
+        def fake_gitops():
+            self.fi.env["git_branch"] = "autopkg/island-1-2-3"
+            self.fi.env["pull_request_url"] = "https://github.com/org/repo/pull/7"
+
+        self.fi.env["gitops_mode"] = True
+        self.fi._run_gitops_workflow = fake_gitops
+        self.fi.main()
+        self.assertIsNone(self._summary())
+
+    # --- GitOps mode: genuine import builds the summary ----------------------
+
+    def test_successful_gitops_pr_builds_summary(self):
+        def fake_gitops():
+            self.fi.env["git_branch"] = "autopkg/island-1-2-3"
+            self.fi.env["pull_request_url"] = "https://github.com/org/repo/pull/8"
+            self.fi.env["cloudfront_url"] = "https://cdn.example.com/Island-1.2.3.pkg"
+            self.fi.env["hash_sha256"] = "def456"
+            self.fi._import_occurred = True
+
+        self.fi.env["gitops_mode"] = True
+        self.fi._run_gitops_workflow = fake_gitops
+        self.fi.main()
+        summary = self._summary()
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary["data"]["pkg_sha256"], "def456")
+        self.assertEqual(
+            summary["data"]["pull_request_url"], "https://github.com/org/repo/pull/8"
+        )
+        self.assertEqual(
+            summary["data"]["cloudfront_url"], "https://cdn.example.com/Island-1.2.3.pkg"
+        )
 
 
 if __name__ == "__main__":
