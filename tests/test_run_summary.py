@@ -123,7 +123,9 @@ class TestBuildRunSummary(unittest.TestCase):
 
     def test_pkg_name_uses_basename_not_full_path(self):
         """pkg_name must not leak the local cache path into the report."""
-        self.fi.env["pkg_path"] = "/Users/example/Library/AutoPkg/Cache/foo/Island-1.2.3.pkg"
+        self.fi.env["pkg_path"] = (
+            "/Users/example/Library/AutoPkg/Cache/foo/Island-1.2.3.pkg"
+        )
         self.fi._build_run_summary()
         self.assertEqual(self._summary()["data"]["pkg_name"], "Island-1.2.3.pkg")
 
@@ -362,7 +364,8 @@ class TestMainSummaryGating(unittest.TestCase):
             summary["data"]["pull_request_url"], "https://github.com/org/repo/pull/8"
         )
         self.assertEqual(
-            summary["data"]["cloudfront_url"], "https://cdn.example.com/Island-1.2.3.pkg"
+            summary["data"]["cloudfront_url"],
+            "https://cdn.example.com/Island-1.2.3.pkg",
         )
 
 
