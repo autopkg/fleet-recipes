@@ -259,6 +259,11 @@ class TestMainSummaryGating(unittest.TestCase):
     stubbed (as in test_variable_insertion.py) purely to avoid touching the
     network/filesystem/Fleet API; each stub reproduces exactly the env
     mutations the real workflow leaves behind on that path.
+
+    Known gap: the success-path stubs set _import_occurred themselves, so
+    these tests cover main()'s gating, not how the real workflows would
+    assign that flag (in _run_direct_upload_workflow / _run_gitops_workflow).
+    Deleting either assignment of _import_occurred won't break this test.
     """
 
     def setUp(self):

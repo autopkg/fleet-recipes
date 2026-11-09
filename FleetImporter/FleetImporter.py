@@ -266,7 +266,7 @@ class FleetImporter(Processor):
         "fleet_title_id": {"description": "Created/updated Fleet software title ID."},
         "fleet_installer_id": {"description": "Installer ID in Fleet."},
         "hash_sha256": {
-            "description": "SHA-256 hash of the uploaded package, as returned by Fleet."
+            "description": "SHA-256 of the package (from Fleet's response in direct mode, computed locally or from S3 in GitOps mode)."
         },
         "cloudfront_url": {
             "description": "CloudFront URL for the uploaded package (GitOps mode only)."
@@ -278,7 +278,7 @@ class FleetImporter(Processor):
             "description": "Name of the Git branch created for the PR (GitOps mode only)."
         },
         "fleet_importer_summary_result": {
-            "description": "Summary of the FleetImporter run. This variable is ingested by AutoPkg's own `summary_results`, and outputted into the PLIST report created when running AutoPkg with `--report-plist`. Note that it will only contain contents if a package is changed on the Fleet instance, and will otherwise be empty."
+            "description": "Summary of the FleetImporter run. This variable is ingested by AutoPkg's own `summary_results`, and outputted into the PLIST report created when running AutoPkg with `--report-plist`. Note that this variable will only be set when a package is uploaded to Fleet (direct mode) or a pull request is created (GitOps mode)."
         },
     }
 
@@ -622,6 +622,10 @@ class FleetImporter(Processor):
         # Check if GitOps mode is enabled
         gitops_mode = bool(self.env.get("gitops_mode", False))
         self._import_occurred = False
+        # clear any pre-existing summary result
+        if "fleet_importer_summary_result" in self.env:
+            del self.env["fleet_importer_summary_result"]
+
         if gitops_mode:
             self._run_gitops_workflow()
         else:
@@ -641,10 +645,6 @@ class FleetImporter(Processor):
             self._build_run_summary()
 
     def _build_run_summary(self):
-        # clear any pre-existing summary result
-        if "fleet_importer_summary_result" in self.env:
-            del self.env["fleet_importer_summary_result"]
-
         gitops_mode = bool(self.env.get("gitops_mode", False))
         summary = {
             "summary_text": "The following new items were imported into Fleet:",
