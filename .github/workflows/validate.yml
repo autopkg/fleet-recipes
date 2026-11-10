@@ -398,6 +398,28 @@ jobs:
       run: |
         python tests/test_variable_insertion.py
 
+  validate-run-summary:
+    name: Run Summary Unit Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.13'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install PyYAML certifi requests
+
+    - name: Run unit tests
+      run: |
+        python tests/test_run_summary.py
+
   validate-final:
     name: Final Validation Summary
     runs-on: ubuntu-latest
@@ -409,7 +431,8 @@ jobs:
       - integration-test
       - validate-style-guide
       - validate-variable-insertion
-    
+      - validate-run-summary
+
     steps:
     - name: Summary
       run: |

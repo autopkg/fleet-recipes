@@ -84,6 +84,21 @@ FleetImporter recipes support the following variables. Configuration can be set 
 | `s3_retention_versions` | Not used | Optional | `0` | Number of old package versions to retain in S3 (0 = no pruning) |
 | `github_repo_base_branch` | Not used | Optional | `main` | Base branch of GitOps repository used as destination for pull requests. |
 
+
+## Processor Output Variables
+
+The FleetImporter processor additionally outputs variables, which can be used by other processors in a recipe. They are documented below:
+
+| Variable | Direct Mode | GitOps Mode | Description                                                                                                                                                                                                         |
+|----------|-------------|-------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `fleet_title_id` | Yes | No          | The title ID of the created/updated Fleet software.                                                                                                                                                                 |
+| `fleet_installer_id` | Yes | No          | The installer ID of the created/updated Fleet software.                                                                                                                                                             |
+| `hash_sha256` | Yes | Yes         | The SHA-256 of the package (from Fleet's response in direct mode, computed locally or from S3 in GitOps mode)                                                                                                       |
+| `cloudfront_url` | No | Yes         | The CloudFront URL for the uploaded package.                                                                                                                                                                        |
+| `pull_request_url` | No | Yes         | The URL of the created pull request.                                                                                                                                                                                |
+| `git_branch` | No | Yes         | The name of the Git branch created for the above pull request.                                                                                                                                                      |
+| `fleet_importer_summary_result` | Yes | Yes         | An AutoPkg summary object that AutoPkg will put in the run summary. This displays in the CLI output of the AutoPkg run, and is additionally put in the file created when a recipe is run with `--report-plist` set. |
+
 ---
 
 ## Direct mode

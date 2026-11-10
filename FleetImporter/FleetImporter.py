@@ -266,7 +266,7 @@ class FleetImporter(Processor):
         "fleet_title_id": {"description": "Created/updated Fleet software title ID."},
         "fleet_installer_id": {"description": "Installer ID in Fleet."},
         "hash_sha256": {
-            "description": "SHA-256 hash of the uploaded package, as returned by Fleet."
+            "description": "SHA-256 of the package (from Fleet's response in direct mode, computed locally or from S3 in GitOps mode)."
         },
         "cloudfront_url": {
             "description": "CloudFront URL for the uploaded package (GitOps mode only)."
@@ -276,6 +276,9 @@ class FleetImporter(Processor):
         },
         "git_branch": {
             "description": "Name of the Git branch created for the PR (GitOps mode only)."
+        },
+        "fleet_importer_summary_result": {
+            "description": "Summary of the FleetImporter run. This variable is ingested by AutoPkg's own `summary_results`, and outputted into the PLIST report created when running AutoPkg with `--report-plist`. Note that this variable will only be set when a package is uploaded to Fleet (direct mode) or a pull request is created (GitOps mode)."
         },
     }
 
@@ -618,6 +621,11 @@ class FleetImporter(Processor):
     def main(self):
         # Check if GitOps mode is enabled
         gitops_mode = bool(self.env.get("gitops_mode", False))
+        self._import_occurred = False
+        # clear any pre-existing summary result
+        if "fleet_importer_summary_result" in self.env:
+            del self.env["fleet_importer_summary_result"]
+
         if gitops_mode:
             self._run_gitops_workflow()
         else:
@@ -628,6 +636,53 @@ class FleetImporter(Processor):
             if _is_unresolved_autopkg_value(self.env.get("team_id")):
                 self.env["team_id"] = self.env.get("FLEET_TEAM_ID")
             self._run_direct_upload_workflow()
+
+        # Only report a summary when something was actually imported; skip
+        # it on "nothing changed" paths (package/branch already exists,
+        # etc.) so consumers of fleet_importer_summary_result (e.g. a
+        # post-run webhook) don't see false "new items imported" reports.
+        if self._import_occurred:
+            self._build_run_summary()
+
+    def _build_run_summary(self):
+        gitops_mode = bool(self.env.get("gitops_mode", False))
+        summary = {
+            "summary_text": "The following new items were imported into Fleet:",
+            "report_fields": [
+                "name",
+                "version",
+                "pkg_name",
+                "pkg_sha256",
+                "categories",
+                "gitops_mode",
+            ],
+            "data": {
+                "name": self.env.get("display_name", ""),
+                "version": self.env.get("version", ""),
+                "pkg_name": Path(self.env["pkg_path"]).name,
+                "pkg_sha256": self.env.get("hash_sha256", ""),
+                "categories": ",".join(self.env.get("categories", [])),
+                "gitops_mode": str(gitops_mode),
+            },
+        }
+        if gitops_mode:
+            summary["report_fields"].append("git_branch")
+            summary["report_fields"].append("pull_request_url")
+            summary["report_fields"].append("cloudfront_url")
+            summary["data"]["git_branch"] = self.env.get("git_branch", "")
+            summary["data"]["pull_request_url"] = self.env.get("pull_request_url", "")
+            summary["data"]["cloudfront_url"] = self.env.get("cloudfront_url", "")
+        else:
+            summary["report_fields"].append("title_id")
+            summary["report_fields"].append("installer_id")
+            summary["report_fields"].append("fleet_instance")
+            summary["data"]["title_id"] = str(self.env.get("fleet_title_id", ""))
+            summary["data"]["installer_id"] = str(
+                self.env.get("fleet_installer_id", "")
+            )
+            summary["data"]["fleet_instance"] = self.env.get("fleet_api_base", "")
+
+        self.env["fleet_importer_summary_result"] = summary
 
     def _run_direct_upload_workflow(self):
         """Run the original direct upload workflow to Fleet API."""
@@ -864,6 +919,8 @@ class FleetImporter(Processor):
                 return
         else:
             software_package = upload_info.get("software_package", {})
+
+        self._import_occurred = True
 
         # Extract upload results
         title_id = software_package.get("title_id")
@@ -1340,6 +1397,7 @@ class FleetImporter(Processor):
             )
             self.output(f"Pull request created: {pr_url}")
             self.env["pull_request_url"] = pr_url
+            self._import_occurred = True
 
         except Exception as e:
             # If we have a CloudFront URL, log it so it can be manually added
